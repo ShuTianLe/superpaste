@@ -1,0 +1,12 @@
+.DS_Store
+.build/
+dist/
+DerivedData/
+*.xcuserstate
+*.xcworkspace/xcuserdata/
+*.xcodeproj/xcuserdata/
+*.xcodeproj/project.xcworkspace/xcuserdata/
+*.dSYM
+*.zip
+*.dmg
+*.log

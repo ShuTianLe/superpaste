@@ -1,0 +1,12 @@
+import Foundation
+import ClipShelfCore
+
+enum L10n {
+    static func text(_ key: String) -> String {
+        AppLocalization.text(key)
+    }
+
+    static func format(_ key: String, _ arguments: CVarArg...) -> String {
+        String(format: text(key), locale: Locale.current, arguments: arguments)
+    }
+}
