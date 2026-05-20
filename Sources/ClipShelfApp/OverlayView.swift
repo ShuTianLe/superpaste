@@ -159,6 +159,12 @@ struct OverlayView: View {
                             .contentShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
                             .overlay {
                                 CardClickSurface(
+                                    onHover: {
+                                        guard controller.selectedIndex != index else { return }
+                                        withAnimation(OverlayMotion.selection) {
+                                            controller.selectItem(at: index)
+                                        }
+                                    },
                                     onSingleClick: {
                                         withAnimation(OverlayMotion.selection) {
                                             controller.selectItem(at: index)
@@ -167,6 +173,14 @@ struct OverlayView: View {
                                     onDoubleClick: {
                                         controller.selectItem(at: index)
                                         controller.paste(item)
+                                    },
+                                    onScroll: { direction in
+                                        switch direction {
+                                        case .previous:
+                                            controller.selectPrevious()
+                                        case .next:
+                                            controller.selectNext()
+                                        }
                                     }
                                 )
                                 .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
@@ -652,27 +666,67 @@ struct ClipCard: View {
 }
 
 private struct CardClickSurface: NSViewRepresentable {
+    let onHover: () -> Void
     let onSingleClick: () -> Void
     let onDoubleClick: () -> Void
+    let onScroll: (CardScrollDirection) -> Void
 
     func makeNSView(context: Context) -> CardClickView {
         let view = CardClickView()
+        view.onHover = onHover
         view.onSingleClick = onSingleClick
         view.onDoubleClick = onDoubleClick
+        view.onScroll = onScroll
         return view
     }
 
     func updateNSView(_ nsView: CardClickView, context: Context) {
+        nsView.onHover = onHover
         nsView.onSingleClick = onSingleClick
         nsView.onDoubleClick = onDoubleClick
+        nsView.onScroll = onScroll
     }
 }
 
+private enum CardScrollDirection {
+    case previous
+    case next
+}
+
 private final class CardClickView: NSView {
+    var onHover: (() -> Void)?
     var onSingleClick: (() -> Void)?
     var onDoubleClick: (() -> Void)?
+    var onScroll: ((CardScrollDirection) -> Void)?
+
+    private var trackingAreaRef: NSTrackingArea?
+    private var scrollRemainder: CGFloat = 0
+    private var lastScrollDate = Date.distantPast
 
     override var acceptsFirstResponder: Bool { false }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let trackingAreaRef {
+            removeTrackingArea(trackingAreaRef)
+        }
+        let area = NSTrackingArea(
+            rect: bounds,
+            options: [.activeAlways, .mouseEnteredAndExited, .mouseMoved, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(area)
+        trackingAreaRef = area
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        onHover?()
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        onHover?()
+    }
 
     override func mouseDown(with event: NSEvent) {
         if event.clickCount >= 2 {
@@ -684,6 +738,28 @@ private final class CardClickView: NSView {
 
     override func rightMouseDown(with event: NSEvent) {
         super.rightMouseDown(with: event)
+    }
+
+    override func scrollWheel(with event: NSEvent) {
+        let dominantDelta = abs(event.scrollingDeltaX) > abs(event.scrollingDeltaY)
+            ? event.scrollingDeltaX
+            : -event.scrollingDeltaY
+        scrollRemainder += dominantDelta
+
+        let now = Date()
+        guard abs(scrollRemainder) >= 18,
+              now.timeIntervalSince(lastScrollDate) > 0.08
+        else {
+            return
+        }
+
+        lastScrollDate = now
+        if scrollRemainder > 0 {
+            onScroll?(.next)
+        } else {
+            onScroll?(.previous)
+        }
+        scrollRemainder = 0
     }
 }
 
