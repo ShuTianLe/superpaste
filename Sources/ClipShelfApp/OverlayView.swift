@@ -32,8 +32,12 @@ struct OverlayView: View {
             }
             searchFocused = true
         }
-        .onChange(of: controller.query) { _, _ in controller.reload() }
-        .onChange(of: controller.typeFilter) { _, _ in controller.reload() }
+        .onChange(of: controller.query) { _, _ in
+            controller.reload(resetSelection: true, scrollToSelection: true)
+        }
+        .onChange(of: controller.typeFilter) { _, _ in
+            controller.reload(resetSelection: true, scrollToSelection: true)
+        }
         .onExitCommand {
             controller.hideOverlay()
         }
@@ -118,7 +122,7 @@ struct OverlayView: View {
                 isSelected: controller.selectedPinboardId == nil
             ) {
                 controller.selectedPinboardId = nil
-                controller.reload()
+                controller.reload(resetSelection: true, scrollToSelection: true)
             }
 
             ForEach(controller.pinboards) { pinboard in
@@ -129,7 +133,7 @@ struct OverlayView: View {
                     isSelected: controller.selectedPinboardId == pinboard.id
                 ) {
                     controller.selectedPinboardId = pinboard.id
-                    controller.reload()
+                    controller.reload(resetSelection: true, scrollToSelection: true)
                 }
             }
 
@@ -173,14 +177,6 @@ struct OverlayView: View {
                                     onDoubleClick: {
                                         controller.selectItem(at: index)
                                         controller.paste(item)
-                                    },
-                                    onScroll: { direction in
-                                        switch direction {
-                                        case .previous:
-                                            controller.selectPrevious()
-                                        case .next:
-                                            controller.selectNext()
-                                        }
                                     }
                                 )
                                 .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
@@ -212,10 +208,12 @@ struct OverlayView: View {
                     endPoint: .trailing
                 )
             )
-            .onChange(of: controller.selectedIndex) { _, newValue in
-                guard controller.items.indices.contains(newValue) else { return }
+            .background(HorizontalWheelScrollSurface())
+            .onChange(of: controller.selectionScrollRequest) { _, _ in
+                let index = controller.selectedIndex
+                guard controller.items.indices.contains(index) else { return }
                 withAnimation(OverlayMotion.scroll) {
-                    proxy.scrollTo(controller.items[newValue].id, anchor: .center)
+                    proxy.scrollTo(controller.items[index].id, anchor: .center)
                 }
             }
             .overlay(alignment: .bottom) {
@@ -669,14 +667,12 @@ private struct CardClickSurface: NSViewRepresentable {
     let onHover: () -> Void
     let onSingleClick: () -> Void
     let onDoubleClick: () -> Void
-    let onScroll: (CardScrollDirection) -> Void
 
     func makeNSView(context: Context) -> CardClickView {
         let view = CardClickView()
         view.onHover = onHover
         view.onSingleClick = onSingleClick
         view.onDoubleClick = onDoubleClick
-        view.onScroll = onScroll
         return view
     }
 
@@ -684,24 +680,15 @@ private struct CardClickSurface: NSViewRepresentable {
         nsView.onHover = onHover
         nsView.onSingleClick = onSingleClick
         nsView.onDoubleClick = onDoubleClick
-        nsView.onScroll = onScroll
     }
-}
-
-private enum CardScrollDirection {
-    case previous
-    case next
 }
 
 private final class CardClickView: NSView {
     var onHover: (() -> Void)?
     var onSingleClick: (() -> Void)?
     var onDoubleClick: (() -> Void)?
-    var onScroll: ((CardScrollDirection) -> Void)?
 
     private var trackingAreaRef: NSTrackingArea?
-    private var scrollRemainder: CGFloat = 0
-    private var lastScrollDate = Date.distantPast
 
     override var acceptsFirstResponder: Bool { false }
 
@@ -739,27 +726,148 @@ private final class CardClickView: NSView {
     override func rightMouseDown(with event: NSEvent) {
         super.rightMouseDown(with: event)
     }
+}
+
+private struct HorizontalWheelScrollSurface: NSViewRepresentable {
+    func makeNSView(context: Context) -> HorizontalWheelScrollView {
+        HorizontalWheelScrollView()
+    }
+
+    func updateNSView(_ nsView: HorizontalWheelScrollView, context: Context) {}
+}
+
+private final class HorizontalWheelScrollView: NSView {
+    private var eventMonitor: Any?
+    private weak var cachedScrollView: NSScrollView?
+
+    override var acceptsFirstResponder: Bool { false }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        nil
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        cachedScrollView = nil
+        updateEventMonitor()
+    }
+
+    deinit {
+        if let eventMonitor {
+            NSEvent.removeMonitor(eventMonitor)
+        }
+    }
 
     override func scrollWheel(with event: NSEvent) {
-        let dominantDelta = abs(event.scrollingDeltaX) > abs(event.scrollingDeltaY)
-            ? event.scrollingDeltaX
-            : -event.scrollingDeltaY
-        scrollRemainder += dominantDelta
+        scrollHorizontally(with: event)
+    }
 
-        let now = Date()
-        guard abs(scrollRemainder) >= 18,
-              now.timeIntervalSince(lastScrollDate) > 0.08
-        else {
+    private func updateEventMonitor() {
+        if let eventMonitor {
+            NSEvent.removeMonitor(eventMonitor)
+            self.eventMonitor = nil
+        }
+
+        guard window != nil else { return }
+
+        eventMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
+            guard let self,
+                  self.shouldHandle(event)
+            else {
+                return event
+            }
+            self.scrollHorizontally(with: event)
+            return nil
+        }
+    }
+
+    private func shouldHandle(_ event: NSEvent) -> Bool {
+        guard event.window === window else { return false }
+        let point = convert(event.locationInWindow, from: nil)
+        return bounds.contains(point)
+    }
+
+    private func scrollHorizontally(with event: NSEvent) {
+        guard let scrollView = targetScrollView() else {
+            super.scrollWheel(with: event)
             return
         }
 
-        lastScrollDate = now
-        if scrollRemainder > 0 {
-            onScroll?(.next)
-        } else {
-            onScroll?(.previous)
+        let horizontalDelta = abs(event.scrollingDeltaX) > abs(event.scrollingDeltaY)
+            ? event.scrollingDeltaX
+            : -event.scrollingDeltaY
+        guard horizontalDelta != 0 else { return }
+
+        let documentWidth = scrollView.documentView?.bounds.width ?? 0
+        let visibleWidth = scrollView.contentView.bounds.width
+        let maxX = max(documentWidth - visibleWidth, 0)
+        var origin = scrollView.contentView.bounds.origin
+        origin.x = min(max(origin.x + horizontalDelta, 0), maxX)
+        scrollView.contentView.setBoundsOrigin(origin)
+        scrollView.reflectScrolledClipView(scrollView.contentView)
+    }
+
+    private func targetScrollView() -> NSScrollView? {
+        if let cachedScrollView,
+           cachedScrollView.window === window,
+           isUsableTarget(cachedScrollView) {
+            return cachedScrollView
         }
-        scrollRemainder = 0
+
+        if let enclosingScrollView,
+           isUsableTarget(enclosingScrollView) {
+            cachedScrollView = enclosingScrollView
+            return enclosingScrollView
+        }
+
+        if let nearest = nearestScrollView(),
+           isUsableTarget(nearest) {
+            cachedScrollView = nearest
+            return nearest
+        }
+
+        let matched = matchingScrollViewInWindow()
+        cachedScrollView = matched
+        return matched
+    }
+
+    private func nearestScrollView() -> NSScrollView? {
+        var current: NSView? = superview
+        while let view = current {
+            if let scrollView = view as? NSScrollView {
+                return scrollView
+            }
+            current = view.superview
+        }
+        return nil
+    }
+
+    private func matchingScrollViewInWindow() -> NSScrollView? {
+        guard let contentView = window?.contentView else { return nil }
+        let surfaceFrame = convert(bounds, to: nil)
+        let scrollViews = contentView.descendants.compactMap { $0 as? NSScrollView }
+        return scrollViews
+            .filter { scrollView in
+                guard isUsableTarget(scrollView) else { return false }
+                let frame = scrollView.convert(scrollView.bounds, to: nil)
+                return frame.intersects(surfaceFrame)
+            }
+            .max { lhs, rhs in
+                lhs.convert(lhs.bounds, to: nil).intersection(surfaceFrame).width
+                    < rhs.convert(rhs.bounds, to: nil).intersection(surfaceFrame).width
+            }
+    }
+
+    private func isUsableTarget(_ scrollView: NSScrollView) -> Bool {
+        let documentWidth = scrollView.documentView?.bounds.width ?? 0
+        let visibleWidth = scrollView.contentView.bounds.width
+        return documentWidth > visibleWidth
+    }
+}
+
+private extension NSView {
+    var descendants: [NSView] {
+        subviews + subviews.flatMap(\.descendants)
     }
 }
 

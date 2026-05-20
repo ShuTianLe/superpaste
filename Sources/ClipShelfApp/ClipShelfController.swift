@@ -42,6 +42,7 @@ final class ClipShelfController: ObservableObject {
     @Published var localizationVersion = 0
     @Published var searchFocusRequest = 0
     @Published var overlayFocusResetRequest = 0
+    @Published var selectionScrollRequest = 0
 
     private var pasteTargetContext: PasteTargetContext?
 
@@ -58,7 +59,7 @@ final class ClipShelfController: ObservableObject {
         reload()
     }
 
-    func reload() {
+    func reload(resetSelection: Bool = false, scrollToSelection: Bool = false) {
         do {
             pinboards = try store.pinboards()
             items = try store.items(
@@ -67,7 +68,14 @@ final class ClipShelfController: ObservableObject {
                 source: sourceFilter.isEmpty ? nil : sourceFilter,
                 pinboardId: selectedPinboardId
             )
-            selectedIndex = min(selectedIndex, max(items.count - 1, 0))
+            if resetSelection {
+                selectedIndex = 0
+            } else {
+                selectedIndex = min(selectedIndex, max(items.count - 1, 0))
+            }
+            if scrollToSelection {
+                requestSelectionScroll()
+            }
         } catch {
             showTransientMessage(error.localizedDescription)
         }
@@ -88,7 +96,7 @@ final class ClipShelfController: ObservableObject {
         selectedIndex = 0
         searchFocusRequest = 0
         overlayFocusResetRequest += 1
-        reload()
+        reload(resetSelection: true, scrollToSelection: true)
         overlayPresenter?.show()
     }
 
@@ -98,17 +106,28 @@ final class ClipShelfController: ObservableObject {
 
     func selectNext() {
         guard !items.isEmpty else { return }
-        selectedIndex = min(selectedIndex + 1, items.count - 1)
+        let nextIndex = min(selectedIndex + 1, items.count - 1)
+        guard nextIndex != selectedIndex else { return }
+        selectedIndex = nextIndex
+        requestSelectionScroll()
     }
 
     func selectPrevious() {
         guard !items.isEmpty else { return }
-        selectedIndex = max(selectedIndex - 1, 0)
+        let previousIndex = max(selectedIndex - 1, 0)
+        guard previousIndex != selectedIndex else { return }
+        selectedIndex = previousIndex
+        requestSelectionScroll()
     }
 
     func selectItem(at index: Int) {
         guard items.indices.contains(index) else { return }
         selectedIndex = index
+    }
+
+    func requestSelectionScroll() {
+        guard items.indices.contains(selectedIndex) else { return }
+        selectionScrollRequest += 1
     }
 
     func handleOverlayKeyEvent(_ event: NSEvent, isSearchFieldFocused: Bool) -> Bool {
@@ -137,7 +156,7 @@ final class ClipShelfController: ObservableObject {
                 query = ""
                 searchFocusRequest = 0
                 overlayFocusResetRequest += 1
-                reload()
+                reload(resetSelection: true, scrollToSelection: true)
                 return true
             }
             hideOverlay()
@@ -156,6 +175,7 @@ final class ClipShelfController: ObservableObject {
                 return true
             }
             selectedIndex = index
+            requestSelectionScroll()
             paste(items[index])
             return true
         }
