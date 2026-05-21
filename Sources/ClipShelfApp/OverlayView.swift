@@ -1295,9 +1295,10 @@ private final class HorizontalWheelScrollView: NSView {
             return
         }
 
-        let horizontalDelta = abs(event.scrollingDeltaX) > abs(event.scrollingDeltaY)
+        let rawDelta = abs(event.scrollingDeltaX) > abs(event.scrollingDeltaY)
             ? event.scrollingDeltaX
             : -event.scrollingDeltaY
+        let horizontalDelta = scaledWheelDelta(rawDelta, event: event)
         guard horizontalDelta != 0 else { return }
 
         let documentWidth = scrollView.documentView?.bounds.width ?? 0
@@ -1307,6 +1308,18 @@ private final class HorizontalWheelScrollView: NSView {
         origin.x = min(max(origin.x + horizontalDelta, 0), maxX)
         scrollView.contentView.setBoundsOrigin(origin)
         scrollView.reflectScrolledClipView(scrollView.contentView)
+    }
+
+    private func scaledWheelDelta(_ delta: CGFloat, event: NSEvent) -> CGFloat {
+        guard delta != 0 else { return 0 }
+
+        if event.hasPreciseScrollingDeltas {
+            return delta * 1.4
+        }
+
+        let direction: CGFloat = delta > 0 ? 1 : -1
+        let magnitude = min(max(abs(delta) * 10, 120), 260)
+        return direction * magnitude
     }
 
     private func targetScrollView() -> NSScrollView? {
