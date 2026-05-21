@@ -15,7 +15,12 @@ rm -f "$DMG"
 rm -rf "$STAGING"
 mkdir -p "$STAGING"
 cp -R "$APP" "$STAGING/"
-ln -s /Applications "$STAGING/Applications"
+
+osascript <<OSA
+tell application "Finder"
+  make new alias file to POSIX file "/Applications" at POSIX file "$STAGING" with properties {name:"Applications"}
+end tell
+OSA
 
 TMP_DMG="$ROOT/dist/Superpaste.tmp.dmg"
 rm -f "$TMP_DMG"
