@@ -88,7 +88,8 @@ jobs:
           VERSION="${{ inputs.version }}"
           ASSET="Superpaste-v${VERSION}-macOS-arm64.dmg"
           cp dist/Superpaste.dmg "dist/${ASSET}"
-          shasum -a 256 "dist/${ASSET}" | tee "dist/${ASSET}.sha256"
+          SHA_VALUE="$(shasum -a 256 "dist/${ASSET}" | awk '{print $1}')"
+          echo "${SHA_VALUE}  ${ASSET}" | tee "dist/${ASSET}.sha256"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
