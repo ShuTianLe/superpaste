@@ -80,7 +80,7 @@ jobs:
           codesign --verify --deep --strict --verbose=2 dist/Superpaste.app
           test -f dist/Superpaste.app/Contents/Resources/Assets.car
           assetutil --info dist/Superpaste.app/Contents/Resources/Assets.car > /tmp/assets.json
-          rg '"Name" : "AppIcon"|"AssetType" : "IconImageStack"|"Appearance" : "NSAppearanceNameDarkAqua"|"Appearance" : "NSAppearanceNameAqua"' /tmp/assets.json
+          grep -E '"Name" : "AppIcon"|"AssetType" : "IconImageStack"|"Appearance" : "NSAppearanceNameDarkAqua"|"Appearance" : "NSAppearanceNameAqua"' /tmp/assets.json
 
       - name: Prepare release asset
         run: |
