@@ -5,6 +5,8 @@ import SwiftUI
 struct OverlayView: View {
     @ObservedObject var controller: ClipShelfController
     @FocusState private var searchFocused: Bool
+    @State private var visualSelectedIndex = 0
+    @State private var thumbnailCache = OverlayThumbnailCache()
 
     var body: some View {
         VStack(spacing: 0) {
@@ -19,6 +21,8 @@ struct OverlayView: View {
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .onAppear {
             searchFocused = false
+            visualSelectedIndex = controller.selectedIndex
+            controller.setVisualSelectedIndex(controller.selectedIndex)
             controller.accessibilityTrusted = AccessibilityPermission.isTrusted
             controller.reload()
         }
@@ -37,6 +41,17 @@ struct OverlayView: View {
         }
         .onChange(of: controller.typeFilter) { _, _ in
             controller.reload(resetSelection: true, scrollToSelection: true)
+        }
+        .onChange(of: controller.items) { _, items in
+            visualSelectedIndex = min(controller.selectedIndex, max(items.count - 1, 0))
+            controller.setVisualSelectedIndex(visualSelectedIndex)
+            let itemIds = Set(items.map(\.id))
+            thumbnailCache.retain(itemIds: itemIds)
+        }
+        .onChange(of: controller.selectedIndex) { _, index in
+            guard controller.items.indices.contains(index) else { return }
+            visualSelectedIndex = index
+            controller.setVisualSelectedIndex(index)
         }
         .onExitCommand {
             controller.hideOverlay()
@@ -63,7 +78,10 @@ struct OverlayView: View {
                     .textFieldStyle(.plain)
                     .font(.system(size: 16, weight: .medium))
                     .focused($searchFocused)
-                    .onSubmit { controller.pasteSelected() }
+                    .onSubmit {
+                        controller.syncSelectionToVisualSelection()
+                        controller.pasteSelected()
+                    }
             }
             .padding(.horizontal, 12)
             .frame(height: 40)
@@ -155,24 +173,27 @@ struct OverlayView: View {
                             ClipCard(
                                 index: index,
                                 item: item,
-                                isSelected: controller.selectedIndex == index,
+                                isSelected: visualSelectedIndex == index,
                                 thumbnailProvider: thumbnail(for:)
                             )
+                            .equatable()
                             .id(item.id)
-                            .zIndex(controller.selectedIndex == index ? 10 : 0)
                             .contentShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
                             .overlay {
                                 CardClickSurface(
                                     onHover: {
-                                        guard controller.selectedIndex != index else { return }
-                                        controller.selectItem(at: index)
+                                        guard visualSelectedIndex != index else { return }
+                                        visualSelectedIndex = index
+                                        controller.setVisualSelectedIndex(index)
                                     },
                                     onSingleClick: {
                                         withAnimation(OverlayMotion.selectionFast) {
+                                            visualSelectedIndex = index
                                             controller.selectItem(at: index)
                                         }
                                     },
                                     onDoubleClick: {
+                                        visualSelectedIndex = index
                                         controller.selectItem(at: index)
                                         controller.paste(item)
                                     }
@@ -258,12 +279,7 @@ struct OverlayView: View {
     }
 
     private func thumbnail(for item: ClipboardItem) -> NSImage? {
-        guard let blob = item.blobRefs.first(where: { $0.thumbnailPath != nil }),
-              let data = try? controller.store.thumbnailData(for: blob)
-        else {
-            return nil
-        }
-        return NSImage(data: data)
+        thumbnailCache.image(for: item, store: controller.store)
     }
 }
 
@@ -284,6 +300,34 @@ struct AppGlyph: View {
                 .offset(x: -size * 0.08, y: -size * 0.06)
         }
         .frame(width: size, height: size)
+    }
+}
+
+private final class OverlayThumbnailCache {
+    private var images: [UUID: NSImage] = [:]
+    private var misses: Set<UUID> = []
+
+    func image(for item: ClipboardItem, store: ClipboardStore) -> NSImage? {
+        if let cached = images[item.id] {
+            return cached
+        }
+        if misses.contains(item.id) {
+            return nil
+        }
+        guard let blob = item.blobRefs.first(where: { $0.thumbnailPath != nil }),
+              let data = try? store.thumbnailData(for: blob),
+              let image = NSImage(data: data)
+        else {
+            misses.insert(item.id)
+            return nil
+        }
+        images[item.id] = image
+        return image
+    }
+
+    func retain(itemIds: Set<UUID>) {
+        images = images.filter { itemIds.contains($0.key) }
+        misses = misses.filter { itemIds.contains($0) }
     }
 }
 
@@ -512,7 +556,7 @@ struct PinboardButton: View {
     }
 }
 
-struct ClipCard: View {
+struct ClipCard: View, Equatable {
     let index: Int
     let item: ClipboardItem
     let isSelected: Bool
@@ -520,6 +564,12 @@ struct ClipCard: View {
     @State private var isHovering = false
     private var typeStyle: ClipboardTypeStyle {
         ClipboardTypeStyle(type: ClipboardTypeFilter(rawValue: item.primaryType))
+    }
+
+    static func == (lhs: ClipCard, rhs: ClipCard) -> Bool {
+        lhs.index == rhs.index &&
+            lhs.item == rhs.item &&
+            lhs.isSelected == rhs.isSelected
     }
 
     var body: some View {

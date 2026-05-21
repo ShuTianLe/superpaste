@@ -45,6 +45,7 @@ final class ClipShelfController: ObservableObject {
     @Published var selectionScrollRequest = 0
 
     private var pasteTargetContext: PasteTargetContext?
+    private var visualSelectedIndex: Int?
 
     var isPaused: Bool {
         get { watcher.isPaused }
@@ -73,6 +74,7 @@ final class ClipShelfController: ObservableObject {
             } else {
                 selectedIndex = min(selectedIndex, max(items.count - 1, 0))
             }
+            visualSelectedIndex = selectedIndex
             if scrollToSelection {
                 requestSelectionScroll()
             }
@@ -94,6 +96,7 @@ final class ClipShelfController: ObservableObject {
         }
         query = ""
         selectedIndex = 0
+        visualSelectedIndex = 0
         searchFocusRequest = 0
         overlayFocusResetRequest += 1
         reload(resetSelection: true, scrollToSelection: true)
@@ -109,6 +112,7 @@ final class ClipShelfController: ObservableObject {
         let nextIndex = min(selectedIndex + 1, items.count - 1)
         guard nextIndex != selectedIndex else { return }
         selectedIndex = nextIndex
+        visualSelectedIndex = nextIndex
         requestSelectionScroll()
     }
 
@@ -117,12 +121,29 @@ final class ClipShelfController: ObservableObject {
         let previousIndex = max(selectedIndex - 1, 0)
         guard previousIndex != selectedIndex else { return }
         selectedIndex = previousIndex
+        visualSelectedIndex = previousIndex
         requestSelectionScroll()
     }
 
     func selectItem(at index: Int) {
         guard items.indices.contains(index) else { return }
         selectedIndex = index
+        visualSelectedIndex = index
+    }
+
+    func setVisualSelectedIndex(_ index: Int) {
+        guard items.indices.contains(index) else { return }
+        visualSelectedIndex = index
+    }
+
+    func syncSelectionToVisualSelection() {
+        guard let visualSelectedIndex,
+              items.indices.contains(visualSelectedIndex),
+              selectedIndex != visualSelectedIndex
+        else {
+            return
+        }
+        selectedIndex = visualSelectedIndex
     }
 
     func requestSelectionScroll() {
@@ -133,6 +154,7 @@ final class ClipShelfController: ObservableObject {
     func handleOverlayKeyEvent(_ event: NSEvent, isSearchFieldFocused: Bool) -> Bool {
         switch Int(event.keyCode) {
         case 36, 76:
+            syncSelectionToVisualSelection()
             pasteSelected()
             return true
         case 123:
@@ -148,6 +170,7 @@ final class ClipShelfController: ObservableObject {
                     searchFocusRequest += 1
                 }
             } else if items.indices.contains(selectedIndex) {
+                syncSelectionToVisualSelection()
                 delete(items[selectedIndex])
             }
             return true
@@ -175,6 +198,7 @@ final class ClipShelfController: ObservableObject {
                 return true
             }
             selectedIndex = index
+            visualSelectedIndex = index
             requestSelectionScroll()
             paste(items[index])
             return true
