@@ -165,12 +165,10 @@ struct OverlayView: View {
                                 CardClickSurface(
                                     onHover: {
                                         guard controller.selectedIndex != index else { return }
-                                        withAnimation(OverlayMotion.selection) {
-                                            controller.selectItem(at: index)
-                                        }
+                                        controller.selectItem(at: index)
                                     },
                                     onSingleClick: {
-                                        withAnimation(OverlayMotion.selection) {
+                                        withAnimation(OverlayMotion.selectionFast) {
                                             controller.selectItem(at: index)
                                         }
                                     },
@@ -302,6 +300,8 @@ struct ShortcutHint: View {
 
 private enum OverlayMotion {
     static let selection = Animation.spring(response: 0.28, dampingFraction: 0.78, blendDuration: 0.08)
+    static let selectionFast = Animation.easeOut(duration: 0.10)
+    static let hover = Animation.easeOut(duration: 0.08)
     static let scroll = Animation.smooth(duration: 0.24)
     static let quick = Animation.smooth(duration: 0.16)
 }
@@ -567,12 +567,12 @@ struct ClipCard: View {
         .background(cardBackground)
         .overlay(cardHighlight, alignment: .top)
         .overlay(cardBorder)
-        .scaleEffect(isSelected ? 1.035 : (isHovering ? 1.012 : 1.0))
-        .offset(y: isSelected ? -5 : (isHovering ? -2 : 0))
-        .shadow(color: Color.black.opacity(isSelected ? 0.23 : (isHovering ? 0.13 : 0.07)), radius: isSelected ? 22 : 11, x: 0, y: isSelected ? 14 : 6)
-        .shadow(color: typeStyle.accent.opacity(isSelected ? 0.18 : 0), radius: 16, x: 0, y: 7)
-        .animation(OverlayMotion.selection, value: isSelected)
-        .animation(OverlayMotion.quick, value: isHovering)
+        .scaleEffect(isSelected ? 1.018 : (isHovering ? 1.006 : 1.0))
+        .offset(y: isSelected ? -2 : (isHovering ? -1 : 0))
+        .shadow(color: Color.black.opacity(isSelected ? 0.16 : (isHovering ? 0.10 : 0.07)), radius: isSelected ? 12 : 8, x: 0, y: isSelected ? 7 : 4)
+        .shadow(color: typeStyle.accent.opacity(isSelected ? 0.10 : 0), radius: 8, x: 0, y: 4)
+        .animation(OverlayMotion.hover, value: isSelected)
+        .animation(OverlayMotion.hover, value: isHovering)
         .onHover { hovering in
             isHovering = hovering
         }
@@ -1191,6 +1191,7 @@ private final class CardClickView: NSView {
     var onDoubleClick: (() -> Void)?
 
     private var trackingAreaRef: NSTrackingArea?
+    private var isMouseInside = false
 
     override var acceptsFirstResponder: Bool { false }
 
@@ -1210,11 +1211,19 @@ private final class CardClickView: NSView {
     }
 
     override func mouseEntered(with event: NSEvent) {
+        guard !isMouseInside else { return }
+        isMouseInside = true
         onHover?()
     }
 
     override func mouseMoved(with event: NSEvent) {
+        guard !isMouseInside else { return }
+        isMouseInside = true
         onHover?()
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        isMouseInside = false
     }
 
     override func mouseDown(with event: NSEvent) {
