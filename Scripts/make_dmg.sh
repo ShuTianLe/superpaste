@@ -8,6 +8,7 @@ STAGING="$ROOT/dist/dmg-stage"
 VOLUME_NAME="Superpaste"
 WINDOW_WIDTH=640
 WINDOW_HEIGHT=420
+APPLICATIONS_ICON="/System/Library/CoreServices/CoreTypes.bundle/Contents/Resources/ApplicationsFolderIcon.icns"
 
 "$ROOT/Scripts/build_app.sh"
 
@@ -21,6 +22,14 @@ tell application "Finder"
   make new alias file to POSIX file "/Applications" at POSIX file "$STAGING" with properties {name:"Applications"}
 end tell
 OSA
+
+ICON_WORKDIR="$(mktemp -d)"
+trap 'rm -rf "$ICON_WORKDIR"' EXIT
+cp "$APPLICATIONS_ICON" "$ICON_WORKDIR/ApplicationsFolderIcon.icns"
+sips -i "$ICON_WORKDIR/ApplicationsFolderIcon.icns" >/dev/null
+DeRez -only icns "$ICON_WORKDIR/ApplicationsFolderIcon.icns" > "$ICON_WORKDIR/ApplicationsIcon.rsrc"
+Rez -append "$ICON_WORKDIR/ApplicationsIcon.rsrc" -o "$STAGING/Applications"
+SetFile -a C "$STAGING/Applications"
 
 TMP_DMG="$ROOT/dist/Superpaste.tmp.dmg"
 rm -f "$TMP_DMG"
