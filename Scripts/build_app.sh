@@ -3,7 +3,8 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 CONFIG="${CONFIG:-release}"
-APP_NAME="ClipShelf"
+PRODUCT_NAME="ClipShelf"
+APP_NAME="Superpaste"
 BUILD_DIR="$ROOT/.build/$CONFIG"
 APP_DIR="$ROOT/dist/$APP_NAME.app"
 CONTENTS="$APP_DIR/Contents"
@@ -16,7 +17,7 @@ swift build -c "$CONFIG" --arch arm64
 
 rm -rf "$APP_DIR"
 mkdir -p "$MACOS" "$RESOURCES"
-cp "$BUILD_DIR/$APP_NAME" "$MACOS/$APP_NAME"
+cp "$BUILD_DIR/$PRODUCT_NAME" "$MACOS/$APP_NAME"
 cp "$ROOT/Resources/Info.plist" "$CONTENTS/Info.plist"
 cp "$ROOT/Resources/AppIcon.icns" "$RESOURCES/AppIcon.icns"
 for locale_dir in "$ROOT"/Resources/*.lproj; do

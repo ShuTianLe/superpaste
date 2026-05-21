@@ -121,12 +121,91 @@ func testRetentionCleanupKeepsPinnedItems() throws {
     try expect(previews.contains("new"), "new item should survive retention cleanup")
 }
 
+func testRetentionCleanupSupportsHours() throws {
+    let temp = FileManager.default.temporaryDirectory
+        .appendingPathComponent("ClipShelfTests-\(UUID().uuidString)", isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: temp) }
+
+    let store = try ClipboardStore(baseURL: temp, keyProvider: StaticKeyStore(key: SymmetricKey(size: .bits256)))
+
+    let oldPayload = ClipboardPayload(uti: "public.utf8-plain-text", data: Data("old hourly".utf8))
+    let oldItem = ClipboardItem(
+        createdAt: Date(timeIntervalSinceNow: -13 * 60 * 60),
+        sourceBundleId: nil,
+        sourceName: nil,
+        primaryType: ClipboardTypeFilter.text.rawValue,
+        previewText: "old hourly",
+        contentHash: Hashing.contentHash(payloads: [oldPayload])
+    )
+    let newPayload = ClipboardPayload(uti: "public.utf8-plain-text", data: Data("new hourly".utf8))
+    let newItem = ClipboardItem(
+        createdAt: Date(timeIntervalSinceNow: -11 * 60 * 60),
+        sourceBundleId: nil,
+        sourceName: nil,
+        primaryType: ClipboardTypeFilter.text.rawValue,
+        previewText: "new hourly",
+        contentHash: Hashing.contentHash(payloads: [newPayload])
+    )
+
+    _ = try store.addCapturedItem(PendingClipboardItem(item: oldItem, payloads: [oldPayload]))
+    _ = try store.addCapturedItem(PendingClipboardItem(item: newItem, payloads: [newPayload]))
+
+    try store.cleanup(retentionPolicy: .hours12)
+
+    let previews = try store.items().map(\.previewText)
+    try expect(!previews.contains("old hourly"), "12 hour cleanup should remove older unpinned items")
+    try expect(previews.contains("new hourly"), "12 hour cleanup should keep newer items")
+}
+
+func testStorageUsageAndClearActions() throws {
+    let temp = FileManager.default.temporaryDirectory
+        .appendingPathComponent("ClipShelfTests-\(UUID().uuidString)", isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: temp) }
+
+    let store = try ClipboardStore(baseURL: temp, keyProvider: StaticKeyStore(key: SymmetricKey(size: .bits256)))
+    let pinnedPayload = ClipboardPayload(uti: "public.utf8-plain-text", data: Data("pinned".utf8))
+    var pinnedItem = ClipboardItem(
+        sourceBundleId: nil,
+        sourceName: nil,
+        primaryType: ClipboardTypeFilter.text.rawValue,
+        previewText: "pinned",
+        contentHash: Hashing.contentHash(payloads: [pinnedPayload])
+    )
+    pinnedItem.isPinned = true
+
+    let unpinnedPayload = ClipboardPayload(uti: "public.utf8-plain-text", data: Data("unpinned".utf8))
+    let unpinnedItem = ClipboardItem(
+        sourceBundleId: nil,
+        sourceName: nil,
+        primaryType: ClipboardTypeFilter.text.rawValue,
+        previewText: "unpinned",
+        contentHash: Hashing.contentHash(payloads: [unpinnedPayload])
+    )
+
+    _ = try store.addCapturedItem(PendingClipboardItem(item: pinnedItem, payloads: [pinnedPayload]))
+    _ = try store.addCapturedItem(PendingClipboardItem(item: unpinnedItem, payloads: [unpinnedPayload]))
+
+    let usage = try store.storageUsage()
+    try expect(usage.itemCount == 2, "storage usage should count items")
+    try expect(usage.blobCount == 2, "storage usage should count payloads")
+
+    try store.deleteUnpinnedItems()
+    var previews = try store.items().map(\.previewText)
+    try expect(previews == ["pinned"], "deleteUnpinnedItems should preserve pinned items")
+
+    try store.deleteAllItems()
+    previews = try store.items().map(\.previewText)
+    try expect(previews.isEmpty, "deleteAllItems should remove every history item")
+}
+
 let tests: [(String, () throws -> Void)] = [
     ("hashing order stability", testHashingIsStableAcrossPayloadOrder),
     ("privacy concealed type skip", testPrivacySkipsDefaultConcealedTypes),
     ("privacy ignored bundle skip", testPrivacySkipsIgnoredBundleId),
     ("encrypted store round trip", testEncryptedStoreRoundTripsPayloadsAndDeduplicates),
-    ("retention cleanup keeps pinned items", testRetentionCleanupKeepsPinnedItems)
+    ("retention cleanup keeps pinned items", testRetentionCleanupKeepsPinnedItems),
+    ("retention cleanup supports hours", testRetentionCleanupSupportsHours),
+    ("storage usage and clear actions", testStorageUsageAndClearActions)
 ]
 
 do {

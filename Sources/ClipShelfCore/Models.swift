@@ -142,15 +142,24 @@ public enum PasteMode: String, Codable, CaseIterable {
 }
 
 public enum RetentionPolicy: String, Codable, CaseIterable {
-    case forever
+    case hours12
+    case days1
+    case days7
     case days30
     case days90
     case days365
+    case forever
 
     public var days: Int? {
         switch self {
         case .forever:
             return nil
+        case .hours12:
+            return nil
+        case .days1:
+            return 1
+        case .days7:
+            return 7
         case .days30:
             return 30
         case .days90:
@@ -160,10 +169,35 @@ public enum RetentionPolicy: String, Codable, CaseIterable {
         }
     }
 
+    public var expirationInterval: TimeInterval? {
+        switch self {
+        case .forever:
+            return nil
+        case .hours12:
+            return 12 * 60 * 60
+        case .days1:
+            return 24 * 60 * 60
+        case .days7:
+            return 7 * 24 * 60 * 60
+        case .days30:
+            return 30 * 24 * 60 * 60
+        case .days90:
+            return 90 * 24 * 60 * 60
+        case .days365:
+            return 365 * 24 * 60 * 60
+        }
+    }
+
     public var displayName: String {
         switch self {
         case .forever:
             return AppLocalization.text("retention.forever", value: "Forever")
+        case .hours12:
+            return AppLocalization.text("retention.hours12", value: "12 hours")
+        case .days1:
+            return AppLocalization.text("retention.days1", value: "1 day")
+        case .days7:
+            return AppLocalization.text("retention.days7", value: "7 days")
         case .days30:
             return AppLocalization.text("retention.days30", value: "30 days")
         case .days90:
@@ -171,6 +205,34 @@ public enum RetentionPolicy: String, Codable, CaseIterable {
         case .days365:
             return AppLocalization.text("retention.days365", value: "365 days")
         }
+    }
+}
+
+public struct StorageUsage: Hashable {
+    public var itemCount: Int
+    public var blobCount: Int
+    public var payloadBytes: Int64
+    public var databaseBytes: Int64
+    public var attachmentBytes: Int64
+    public var totalBytes: Int64
+    public var baseURL: URL
+
+    public init(
+        itemCount: Int,
+        blobCount: Int,
+        payloadBytes: Int64,
+        databaseBytes: Int64,
+        attachmentBytes: Int64,
+        totalBytes: Int64,
+        baseURL: URL
+    ) {
+        self.itemCount = itemCount
+        self.blobCount = blobCount
+        self.payloadBytes = payloadBytes
+        self.databaseBytes = databaseBytes
+        self.attachmentBytes = attachmentBytes
+        self.totalBytes = totalBytes
+        self.baseURL = baseURL
     }
 }
 

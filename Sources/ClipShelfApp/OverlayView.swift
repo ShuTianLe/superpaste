@@ -62,13 +62,9 @@ struct OverlayView: View {
         HStack(spacing: 14) {
             AppGlyph(size: 32)
 
-            VStack(alignment: .leading, spacing: 2) {
-                Text(L10n.text("overlay.title"))
-                    .font(.system(size: 15, weight: .semibold))
-                Text(L10n.text("overlay.subtitle"))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
+            Text(L10n.text("overlay.title"))
+                .font(.system(size: 15, weight: .semibold))
+                .lineLimit(1)
             .frame(width: 176, alignment: .leading)
 
             HStack(spacing: 8) {

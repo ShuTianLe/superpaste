@@ -2,10 +2,10 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-APP="$ROOT/dist/ClipShelf.app"
-DMG="$ROOT/dist/ClipShelf.dmg"
+APP="$ROOT/dist/Superpaste.app"
+DMG="$ROOT/dist/Superpaste.dmg"
 STAGING="$ROOT/dist/dmg-stage"
-VOLUME_NAME="ClipShelf"
+VOLUME_NAME="Superpaste"
 BACKGROUND_DIR=".background"
 BACKGROUND_NAME="background.png"
 WINDOW_WIDTH=640
@@ -20,7 +20,7 @@ cp -R "$APP" "$STAGING/"
 cp "$ROOT/Resources/DMG/$BACKGROUND_NAME" "$STAGING/$BACKGROUND_DIR/$BACKGROUND_NAME"
 ln -s /Applications "$STAGING/Applications"
 
-TMP_DMG="$ROOT/dist/ClipShelf.tmp.dmg"
+TMP_DMG="$ROOT/dist/Superpaste.tmp.dmg"
 rm -f "$TMP_DMG"
 hdiutil create -volname "$VOLUME_NAME" -srcfolder "$STAGING" -ov -format UDRW "$TMP_DMG" -quiet
 
@@ -40,7 +40,7 @@ tell application "Finder"
 	    set arrangement of viewOptions to not arranged
 	    set icon size of viewOptions to 96
 	    set background picture of viewOptions to file "$BACKGROUND_DIR:$BACKGROUND_NAME"
-	    set position of item "ClipShelf.app" of container window to {190, 210}
+	    set position of item "Superpaste.app" of container window to {190, 210}
 	    set position of item "Applications" of container window to {450, 210}
 	    close
 	    open

@@ -197,8 +197,8 @@ public final class ClipboardStore {
     }
 
     public func cleanup(retentionPolicy: RetentionPolicy, maxBytes: Int64? = nil) throws {
-        if let days = retentionPolicy.days {
-            let cutoff = Date().addingTimeInterval(TimeInterval(-days * 24 * 60 * 60))
+        if let interval = retentionPolicy.expirationInterval {
+            let cutoff = Date().addingTimeInterval(-interval)
             let rows = try database.query(
                 "SELECT id FROM clipboard_items WHERE created_at < ? AND is_pinned = 0",
                 [.date(cutoff)]
@@ -234,16 +234,59 @@ public final class ClipboardStore {
         }
     }
 
-    public func diagnosticsSummary() throws -> String {
+    public func storageUsage() throws -> StorageUsage {
         let itemCount = try database.query("SELECT COUNT(*) AS count FROM clipboard_items").first?["count"]?.intValue ?? 0
         let blobCount = try database.query("SELECT COUNT(*) AS count FROM clipboard_blobs").first?["count"]?.intValue ?? 0
-        let totalBytes = try totalBlobBytes()
+        let payloadBytes = try totalBlobBytes()
+        let databaseBytes = fileSize(at: baseURL.appendingPathComponent("clipshelf.sqlite"))
+            + fileSize(at: baseURL.appendingPathComponent("clipshelf.sqlite-wal"))
+            + fileSize(at: baseURL.appendingPathComponent("clipshelf.sqlite-shm"))
+        let attachmentBytes = directorySize(at: baseURL.appendingPathComponent("blobs", isDirectory: true))
+            + directorySize(at: baseURL.appendingPathComponent("thumbs", isDirectory: true))
+
+        return StorageUsage(
+            itemCount: itemCount,
+            blobCount: blobCount,
+            payloadBytes: payloadBytes,
+            databaseBytes: databaseBytes,
+            attachmentBytes: attachmentBytes,
+            totalBytes: databaseBytes + attachmentBytes,
+            baseURL: baseURL
+        )
+    }
+
+    public func deleteUnpinnedItems() throws {
+        let rows = try database.query("SELECT id FROM clipboard_items WHERE is_pinned = 0")
+        for row in rows {
+            guard let id = row["id"]?.stringValue.flatMap(UUID.init(uuidString:)) else {
+                continue
+            }
+            try delete(itemId: id)
+        }
+    }
+
+    public func deleteAllItems() throws {
+        let rows = try database.query("SELECT id FROM clipboard_items")
+        for row in rows {
+            guard let id = row["id"]?.stringValue.flatMap(UUID.init(uuidString:)) else {
+                continue
+            }
+            try delete(itemId: id)
+        }
+        try database.execute("DELETE FROM pinboard_items")
+    }
+
+    public func diagnosticsSummary() throws -> String {
+        let usage = try storageUsage()
         return """
-        ClipShelf diagnostics
-        Items: \(itemCount)
-        Blobs: \(blobCount)
-        Payload bytes: \(totalBytes)
-        Store: \(baseURL.path)
+        Superpaste diagnostics
+        Items: \(usage.itemCount)
+        Blobs: \(usage.blobCount)
+        Payload bytes: \(usage.payloadBytes)
+        Database bytes: \(usage.databaseBytes)
+        Attachment bytes: \(usage.attachmentBytes)
+        Total bytes: \(usage.totalBytes)
+        Store: \(usage.baseURL.path)
         Network: disabled by design; no network frameworks or entitlements are used.
         """
     }
@@ -409,5 +452,34 @@ public final class ClipboardStore {
     private func totalBlobBytes() throws -> Int64 {
         let row = try database.query("SELECT COALESCE(SUM(size), 0) AS total FROM clipboard_blobs").first
         return Int64(row?["total"]?.intValue ?? 0)
+    }
+
+    private func fileSize(at url: URL) -> Int64 {
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
+              let size = attributes[.size] as? NSNumber
+        else {
+            return 0
+        }
+        return size.int64Value
+    }
+
+    private func directorySize(at url: URL) -> Int64 {
+        guard let enumerator = FileManager.default.enumerator(
+            at: url,
+            includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey],
+            options: [.skipsHiddenFiles]
+        ) else {
+            return 0
+        }
+
+        var total: Int64 = 0
+        for case let fileURL as URL in enumerator {
+            let resourceValues = try? fileURL.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
+            guard resourceValues?.isRegularFile == true else {
+                continue
+            }
+            total += Int64(resourceValues?.fileSize ?? 0)
+        }
+        return total
     }
 }

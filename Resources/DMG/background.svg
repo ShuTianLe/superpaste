@@ -2,8 +2,8 @@
   <rect width="640" height="420" fill="#F5F7FB"/>
   <circle cx="98" cy="78" r="52" fill="#2F6BFF" opacity="0.10"/>
   <circle cx="560" cy="340" r="86" fill="#2F6BFF" opacity="0.08"/>
-  <text x="56" y="74" font-family="-apple-system,BlinkMacSystemFont,Helvetica" font-size="30" font-weight="700" fill="#172033">ClipShelf</text>
-  <text x="56" y="106" font-family="-apple-system,BlinkMacSystemFont,Helvetica" font-size="15" fill="#667085">Drag ClipShelf to Applications</text>
+  <text x="56" y="74" font-family="-apple-system,BlinkMacSystemFont,Helvetica" font-size="30" font-weight="700" fill="#172033">Superpaste</text>
+  <text x="56" y="106" font-family="-apple-system,BlinkMacSystemFont,Helvetica" font-size="15" fill="#667085">Drag Superpaste to Applications</text>
   <text x="56" y="132" font-family="-apple-system,BlinkMacSystemFont,Helvetica" font-size="14" fill="#667085">拖拽到 Applications 文件夹完成安装</text>
   <path d="M286 210h68" stroke="#98A2B3" stroke-width="3" stroke-linecap="round"/>
   <path d="M344 198l14 12-14 12" fill="none" stroke="#98A2B3" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>

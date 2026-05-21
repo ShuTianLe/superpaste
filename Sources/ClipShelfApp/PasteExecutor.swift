@@ -65,7 +65,7 @@ enum AccessibilityPermission {
     }
 
     static var expectedApplicationsPath: String {
-        "/Applications/ClipShelf.app"
+        "/Applications/Superpaste.app"
     }
 
     static var isRunningFromApplications: Bool {

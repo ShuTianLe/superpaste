@@ -33,7 +33,7 @@ struct SettingsView: View {
             HStack(spacing: 10) {
                 AppGlyph(size: 30)
                 VStack(alignment: .leading, spacing: 1) {
-                    Text("ClipShelf")
+                    Text(L10n.text("app.name"))
                         .font(.system(size: 14, weight: .semibold))
                     Text(L10n.text("settings.title"))
                         .font(.caption)
@@ -54,7 +54,7 @@ struct SettingsView: View {
             Spacer()
         }
         .padding(16)
-        .frame(minWidth: 188, idealWidth: 188, maxWidth: 188, maxHeight: .infinity, alignment: .topLeading)
+        .frame(minWidth: 204, idealWidth: 204, maxWidth: 204, maxHeight: .infinity, alignment: .topLeading)
         .background(.ultraThinMaterial)
     }
 
@@ -81,7 +81,9 @@ struct SettingsView: View {
                         GeneralSettingsView(
                             settings: $controller.settings,
                             largeItemLimitMB: $largeItemLimitMB,
-                            onSave: saveGeneral
+                            onChange: saveGeneral,
+                            onLaunchAtLoginChange: saveGeneralAndApplyLaunchAtLogin,
+                            onLanguageChange: saveGeneralAndRefreshLocalization
                         )
                     case .privacy:
                         PrivacySettingsView(
@@ -105,15 +107,24 @@ struct SettingsView: View {
 
     private func saveGeneral() {
         controller.settings.largeItemLimit = max(largeItemLimitMB, 1) * 1_048_576
-        applyLaunchAtLogin(controller.settings.launchAtLogin)
         controller.saveSettings()
+        onHotKeyChanged(controller.settings)
+    }
+
+    private func saveGeneralAndApplyLaunchAtLogin() {
+        saveGeneral()
+        applyLaunchAtLogin(controller.settings.launchAtLogin)
+    }
+
+    private func saveGeneralAndRefreshLocalization() {
+        controller.settings.largeItemLimit = max(largeItemLimitMB, 1) * 1_048_576
+        controller.saveSettings(refreshLocalization: true)
         onHotKeyChanged(controller.settings)
         onLocalizationChanged()
     }
 
     private func saveSettings() {
         controller.saveSettings()
-        onLocalizationChanged()
     }
 
     private func applyLaunchAtLogin(_ enabled: Bool) {
@@ -172,18 +183,23 @@ private struct SettingsSidebarButton: View {
 
     var body: some View {
         Button(action: action) {
-            Label(section.title, systemImage: section.systemImage)
-                .font(.system(size: 13, weight: isSelected ? .semibold : .regular))
-                .foregroundStyle(isSelected ? Color.primary : Color.secondary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 8)
-                .background {
-                    if isSelected {
-                        RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .fill(Color.accentColor.opacity(0.16))
-                    }
-                }
+            HStack(spacing: 10) {
+                Image(systemName: section.systemImage)
+                    .font(.system(size: 15, weight: .semibold))
+                    .symbolRenderingMode(.hierarchical)
+                    .frame(width: 22)
+                Text(section.title)
+                    .font(.system(size: 13, weight: isSelected ? .semibold : .medium))
+                Spacer(minLength: 0)
+            }
+            .foregroundStyle(isSelected ? Color.primary : Color.secondary)
+            .padding(.horizontal, 12)
+            .frame(maxWidth: .infinity, minHeight: 44, maxHeight: 44, alignment: .leading)
+            .background {
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .fill(isSelected ? Color.accentColor.opacity(0.16) : Color.clear)
+            }
+            .contentShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
         }
         .buttonStyle(.plain)
     }
@@ -243,7 +259,9 @@ private struct SettingsRow<Content: View>: View {
 private struct GeneralSettingsView: View {
     @Binding var settings: AppSettings
     @Binding var largeItemLimitMB: Int
-    let onSave: () -> Void
+    let onChange: () -> Void
+    let onLaunchAtLoginChange: () -> Void
+    let onLanguageChange: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -278,9 +296,6 @@ private struct GeneralSettingsView: View {
                     }
                     .labelsHidden()
                     .frame(width: 210)
-                    .onChange(of: settings.language) { _, _ in
-                        onSave()
-                    }
                 }
 
                 Divider()
@@ -309,7 +324,7 @@ private struct GeneralSettingsView: View {
                         }
                     }
                     .labelsHidden()
-                    .frame(width: 150)
+                    .frame(width: 176)
                 }
 
                 SettingsRow(title: L10n.format("settings.largeLimit", largeItemLimitMB), detail: L10n.text("settings.largeLimitHelp")) {
@@ -317,16 +332,13 @@ private struct GeneralSettingsView: View {
                         .labelsHidden()
                 }
             }
-
-            HStack {
-                Spacer()
-                Button(L10n.text("settings.save")) {
-                    onSave()
-                }
-                .keyboardShortcut(.defaultAction)
-                .buttonStyle(.borderedProminent)
-            }
         }
+        .onChange(of: settings.pasteMode) { _, _ in onChange() }
+        .onChange(of: settings.language) { _, _ in onLanguageChange() }
+        .onChange(of: settings.launchAtLogin) { _, _ in onLaunchAtLoginChange() }
+        .onChange(of: settings.appearance) { _, _ in onChange() }
+        .onChange(of: settings.retentionPolicy) { _, _ in onChange() }
+        .onChange(of: largeItemLimitMB) { _, _ in onChange() }
     }
 }
 
@@ -418,39 +430,183 @@ private struct PrivacySettingsView: View {
 private struct StorageSettingsView: View {
     @ObservedObject var controller: ClipShelfController
     @State private var diagnostics = ""
+    @State private var usage: StorageUsage?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
+            SettingsCard(title: L10n.text("settings.storageUsage"), subtitle: L10n.text("settings.storageUsageHelp")) {
+                if let usage {
+                    HStack(alignment: .center, spacing: 14) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(formatBytes(usage.totalBytes))
+                                .font(.system(size: 28, weight: .semibold, design: .rounded))
+                            Text(L10n.text("settings.totalUsage"))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Image(systemName: "internaldrive.fill")
+                            .font(.system(size: 28, weight: .semibold))
+                            .symbolRenderingMode(.hierarchical)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Divider()
+
+                    VStack(spacing: 8) {
+                        StorageUsageRow(label: L10n.text("settings.historyItems"), value: "\(usage.itemCount)")
+                        StorageUsageRow(label: L10n.text("settings.payloads"), value: "\(usage.blobCount)")
+                        StorageUsageRow(label: L10n.text("settings.payloadBytes"), value: formatBytes(usage.payloadBytes))
+                        StorageUsageRow(label: L10n.text("settings.databaseBytes"), value: formatBytes(usage.databaseBytes))
+                        StorageUsageRow(label: L10n.text("settings.attachmentBytes"), value: formatBytes(usage.attachmentBytes))
+                    }
+                } else {
+                    ProgressView()
+                        .controlSize(.small)
+                }
+
+                Button(L10n.text("settings.refreshStorage")) {
+                    refreshStorage()
+                }
+                .buttonStyle(.borderless)
+            }
+
             SettingsCard(title: L10n.text("settings.localStore"), subtitle: L10n.text("settings.localStoreHelp")) {
                 PathPill(text: controller.store.baseURL.path)
+            }
 
-                HStack {
-                    Button(L10n.text("settings.runCleanup")) {
-                        do {
-                            try controller.store.cleanup(retentionPolicy: controller.settings.retentionPolicy)
-                            controller.reload()
-                        } catch {
-                            controller.showTransientMessage(error.localizedDescription)
-                        }
+            SettingsCard(title: L10n.text("settings.clearOptions"), subtitle: L10n.text("settings.clearOptionsHelp")) {
+                StorageActionRow(
+                    title: L10n.text("settings.clearExpired"),
+                    detail: L10n.text("settings.clearExpiredHelp"),
+                    buttonTitle: L10n.text("settings.clear")
+                ) {
+                    performStorageAction {
+                        try controller.store.cleanup(retentionPolicy: controller.settings.retentionPolicy)
                     }
-                    Button(L10n.text("settings.refreshDiagnostics")) {
-                        diagnostics = (try? controller.store.diagnosticsSummary()) ?? ""
+                }
+
+                Divider()
+
+                StorageActionRow(
+                    title: L10n.text("settings.clearUnpinned"),
+                    detail: L10n.text("settings.clearUnpinnedHelp"),
+                    buttonTitle: L10n.text("settings.clear")
+                ) {
+                    performStorageAction {
+                        try controller.store.deleteUnpinnedItems()
                     }
-                    Spacer()
+                }
+
+                Divider()
+
+                StorageActionRow(
+                    title: L10n.text("settings.clearAll"),
+                    detail: L10n.text("settings.clearAllHelp"),
+                    buttonTitle: L10n.text("settings.clearAllButton"),
+                    isDestructive: true
+                ) {
+                    confirmClearAll()
                 }
             }
 
             SettingsCard(title: L10n.text("settings.diagnostics")) {
+                HStack {
+                    Button(L10n.text("settings.refreshDiagnostics")) {
+                        refreshStorage()
+                    }
+                    .buttonStyle(.borderless)
+                    Spacer()
+                }
+
                 TextEditor(text: $diagnostics)
                     .font(.system(.caption, design: .monospaced))
-                    .frame(minHeight: 250)
+                    .frame(minHeight: 170)
                     .scrollContentBackground(.hidden)
                     .background(Color(nsColor: .textBackgroundColor).opacity(0.55), in: RoundedRectangle(cornerRadius: 8))
-                    .onAppear {
-                        diagnostics = (try? controller.store.diagnosticsSummary()) ?? ""
-                    }
             }
         }
+        .onAppear {
+            refreshStorage()
+        }
+    }
+
+    private func refreshStorage() {
+        usage = try? controller.store.storageUsage()
+        diagnostics = (try? controller.store.diagnosticsSummary()) ?? ""
+    }
+
+    private func performStorageAction(_ action: () throws -> Void) {
+        do {
+            try action()
+            controller.reload(resetSelection: true)
+            refreshStorage()
+        } catch {
+            controller.showTransientMessage(error.localizedDescription)
+        }
+    }
+
+    private func confirmClearAll() {
+        let alert = NSAlert()
+        alert.alertStyle = .critical
+        alert.messageText = L10n.text("settings.confirmClearAllTitle")
+        alert.informativeText = L10n.text("settings.confirmClearAllMessage")
+        alert.addButton(withTitle: L10n.text("settings.confirmClear"))
+        alert.addButton(withTitle: L10n.text("settings.cancel"))
+
+        guard alert.runModal() == .alertFirstButtonReturn else {
+            return
+        }
+
+        performStorageAction {
+            try controller.store.deleteAllItems()
+        }
+    }
+
+    private func formatBytes(_ bytes: Int64) -> String {
+        ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
+    }
+}
+
+private struct StorageUsageRow: View {
+    let label: String
+    let value: String
+
+    var body: some View {
+        HStack {
+            Text(label)
+                .foregroundStyle(.secondary)
+            Spacer()
+            Text(value)
+                .font(.system(.caption, design: .monospaced).weight(.semibold))
+        }
+        .font(.caption)
+    }
+}
+
+private struct StorageActionRow: View {
+    let title: String
+    let detail: String
+    let buttonTitle: String
+    var isDestructive = false
+    let action: () -> Void
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 14) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(.system(size: 13, weight: .medium))
+                Text(detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 16)
+            Button(buttonTitle, action: action)
+                .buttonStyle(.bordered)
+                .foregroundStyle(isDestructive ? Color.red : Color.primary)
+        }
+        .frame(minHeight: 48)
     }
 }
 

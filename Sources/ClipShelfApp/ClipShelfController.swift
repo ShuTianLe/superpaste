@@ -306,7 +306,7 @@ final class ClipShelfController: ObservableObject {
         let pending = PendingClipboardItem(
             item: ClipboardItem(
                 sourceBundleId: Bundle.main.bundleIdentifier,
-                sourceName: "ClipShelf",
+                sourceName: "Superpaste",
                 primaryType: ClipboardTypeFilter.text.rawValue,
                 previewText: text,
                 contentHash: Hashing.contentHash(payloads: [payload]),
@@ -341,12 +341,16 @@ final class ClipShelfController: ObservableObject {
         saveSettings()
     }
 
-    func saveSettings() {
+    func saveSettings(refreshLocalization: Bool = false, reloadItems: Bool = false) {
         AppLocalization.setLanguage(settings.language)
         settingsStore.save(settings)
         accessibilityTrusted = AccessibilityPermission.isTrusted
-        localizationVersion += 1
-        reload()
+        if refreshLocalization {
+            localizationVersion += 1
+        }
+        if reloadItems {
+            reload()
+        }
     }
 
     func showTransientMessage(_ message: String) {

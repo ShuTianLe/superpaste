@@ -58,6 +58,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ClipboardWatcherDelega
         menu.addItem(NSMenuItem(title: L10n.text("menu.pause"), action: #selector(togglePause), keyEquivalent: ""))
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: L10n.text("menu.settings"), action: #selector(showSettings), keyEquivalent: ","))
+        menu.addItem(NSMenuItem(title: L10n.text("menu.about"), action: #selector(showAbout), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: L10n.text("menu.diagnostics"), action: #selector(exportDiagnostics), keyEquivalent: ""))
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: L10n.text("menu.quit"), action: #selector(quit), keyEquivalent: "q"))
@@ -89,7 +90,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ClipboardWatcherDelega
 
         image.unlockFocus()
         image.isTemplate = true
-        image.accessibilityDescription = "ClipShelf"
+        image.accessibilityDescription = "Superpaste"
         return image
     }
 
@@ -138,15 +139,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ClipboardWatcherDelega
         menu.items[safe: 0]?.title = L10n.text("menu.show")
         menu.items[safe: 1]?.title = controller.isPaused ? L10n.text("menu.resume") : L10n.text("menu.pause")
         menu.items[safe: 3]?.title = L10n.text("menu.settings")
-        menu.items[safe: 4]?.title = L10n.text("menu.diagnostics")
-        menu.items[safe: 6]?.title = L10n.text("menu.quit")
+        menu.items[safe: 4]?.title = L10n.text("menu.about")
+        menu.items[safe: 5]?.title = L10n.text("menu.diagnostics")
+        menu.items[safe: 7]?.title = L10n.text("menu.quit")
+    }
+
+    @objc private func showAbout() {
+        NSApp.activate(ignoringOtherApps: true)
+        NSApp.orderFrontStandardAboutPanel(options: [
+            .applicationName: "Superpaste",
+            .applicationVersion: "1.0.2",
+            .version: "1.0.2"
+        ])
     }
 
     @objc private func exportDiagnostics() {
         do {
             let summary = try controller.store.diagnosticsSummary()
             let panel = NSSavePanel()
-            panel.nameFieldStringValue = "ClipShelf Diagnostics.txt"
+            panel.nameFieldStringValue = "Superpaste Diagnostics.txt"
             panel.allowedContentTypes = [.plainText]
             panel.begin { response in
                 guard response == .OK, let url = panel.url else {

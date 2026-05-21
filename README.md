@@ -51,7 +51,7 @@ Scripts/security_check.sh
 
 ### 隐私
 
-剪贴板数据保存在 `~/Library/Application Support/ClipShelf`。payload 使用 AES-GCM 加密，主密钥保存在本机 Keychain。应用不请求网络 entitlement。
+为兼容旧版本，剪贴板数据继续保存在 `~/Library/Application Support/ClipShelf`。payload 使用 AES-GCM 加密，主密钥保存在本机 Keychain。应用不请求网络 entitlement。
 
 ### 签名
 
@@ -110,7 +110,7 @@ Direct paste requires macOS Accessibility permission. If the permission state do
 
 ### Privacy
 
-Clipboard data is stored under `~/Library/Application Support/ClipShelf`. Payloads are encrypted with AES-GCM, and the master key is stored in the local Keychain. The app does not request network entitlements.
+For compatibility with earlier builds, clipboard data remains under `~/Library/Application Support/ClipShelf`. Payloads are encrypted with AES-GCM, and the master key is stored in the local Keychain. The app does not request network entitlements.
 
 ### Signing
 

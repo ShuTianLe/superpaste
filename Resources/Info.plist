@@ -5,29 +5,29 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>en</string>
 	<key>CFBundleExecutable</key>
-	<string>ClipShelf</string>
+	<string>Superpaste</string>
 	<key>CFBundleIdentifier</key>
 	<string>io.clipshelf.local</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>ClipShelf</string>
+	<string>Superpaste</string>
 	<key>CFBundleIconFile</key>
 	<string>AppIcon</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>1.0.0</string>
+	<string>1.0.2</string>
 	<key>CFBundleVersion</key>
-	<string>1</string>
+	<string>3</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>14.0</string>
 	<key>LSUIElement</key>
 	<true/>
 	<key>NSAppleEventsUsageDescription</key>
-	<string>ClipShelf can reactivate the previous application before pasting selected clipboard content.</string>
+	<string>Superpaste can reactivate the previous application before pasting selected clipboard content.</string>
 	<key>NSHumanReadableCopyright</key>
-	<string>Copyright © 2026 ClipShelf.</string>
+	<string>Copyright © 2026 STL.</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
 </dict>
