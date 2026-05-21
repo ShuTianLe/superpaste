@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="backSheet" x1="306" y1="132" x2="820" y2="812" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#64B7FF"/>
+      <stop offset="0.55" stop-color="#2D7EFF"/>
+      <stop offset="1" stop-color="#1646D7"/>
+    </linearGradient>
+    <linearGradient id="frontSheet" x1="190" y1="222" x2="742" y2="888" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#EAF7FF"/>
+      <stop offset="0.56" stop-color="#B8DBFF"/>
+      <stop offset="1" stop-color="#67A8FF"/>
+    </linearGradient>
+    <linearGradient id="fold" x1="594" y1="250" x2="760" y2="430" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#D9EEFF"/>
+      <stop offset="1" stop-color="#84BAFF"/>
+    </linearGradient>
+    <filter id="backShadow" x="-18%" y="-18%" width="136%" height="136%">
+      <feDropShadow dx="0" dy="18" stdDeviation="18" flood-color="#052264" flood-opacity="0.18"/>
+    </filter>
+    <filter id="frontShadow" x="-18%" y="-18%" width="136%" height="136%">
+      <feDropShadow dx="0" dy="22" stdDeviation="20" flood-color="#052264" flood-opacity="0.22"/>
+    </filter>
+  </defs>
+
+  <path
+    d="M374 132h286c74 0 134 60 134 134v438c0 74-60 134-134 134H374c-74 0-134-60-134-134V266c0-74 60-134 134-134Z"
+    fill="url(#backSheet)"
+    transform="translate(40 -6) rotate(6 517 485)"
+    filter="url(#backShadow)"/>
+
+  <path
+    d="M284 246h324c36 0 70 14 95 40l42 42c25 25 39 59 39 95v336c0 74-60 134-134 134H284c-74 0-134-60-134-134V380c0-74 60-134 134-134Z"
+    fill="url(#frontSheet)"
+    filter="url(#frontShadow)"/>
+
+  <path
+    d="M608 246v78c0 58 47 105 105 105h71v-6c0-36-14-70-39-95l-42-42c-25-26-59-40-95-40Z"
+    fill="url(#fold)"/>
+</svg>

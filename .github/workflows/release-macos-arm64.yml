@@ -1,0 +1,134 @@
+name: Release macOS arm64 DMG
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version without leading v
+        required: true
+        default: 1.0.8
+      build:
+        description: CFBundleVersion
+        required: true
+        default: "9"
+      publish_release:
+        description: Create GitHub Release
+        required: true
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
+
+jobs:
+  build:
+    runs-on: macos-26-arm64
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: |
+          set -euo pipefail
+          if [[ -d /Applications/Xcode_26.0.app ]]; then
+            sudo xcode-select -s /Applications/Xcode_26.0.app/Contents/Developer
+          elif [[ -d /Applications/Xcode.app ]]; then
+            sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+          fi
+          xcodebuild -version
+          xcrun --find actool
+
+      - name: Install Icon Composer
+        run: |
+          set -euo pipefail
+          brew update
+          brew install --cask icon-composer
+          test -x "/Applications/Icon Composer.app/Contents/Executables/ictool"
+
+      - name: Verify icon source
+        run: |
+          set -euo pipefail
+          /Applications/Icon\ Composer.app/Contents/Executables/ictool Resources/AppIcon.icon \
+            --export-image \
+            --output-file /tmp/AppIcon-Light.png \
+            --platform macOS \
+            --rendition Default \
+            --width 1024 \
+            --height 1024 \
+            --scale 1
+          /Applications/Icon\ Composer.app/Contents/Executables/ictool Resources/AppIcon.icon \
+            --export-image \
+            --output-file /tmp/AppIcon-Dark.png \
+            --platform macOS \
+            --rendition Dark \
+            --width 1024 \
+            --height 1024 \
+            --scale 1
+          test -s /tmp/AppIcon-Light.png
+          test -s /tmp/AppIcon-Dark.png
+
+      - name: Build and test
+        run: |
+          set -euo pipefail
+          swift build
+          swift build -c release --arch arm64
+          swift run ClipShelfCoreSmokeTests
+          Scripts/security_check.sh
+          Scripts/make_dmg.sh
+          codesign --verify --deep --strict --verbose=2 dist/Superpaste.app
+          test -f dist/Superpaste.app/Contents/Resources/Assets.car
+          assetutil --info dist/Superpaste.app/Contents/Resources/Assets.car > /tmp/assets.json
+          rg '"Name" : "AppIcon"|"AssetType" : "IconImageStack"|"Appearance" : "NSAppearanceNameDarkAqua"|"Appearance" : "NSAppearanceNameAqua"' /tmp/assets.json
+
+      - name: Prepare release asset
+        run: |
+          set -euo pipefail
+          VERSION="${{ inputs.version }}"
+          ASSET="Superpaste-v${VERSION}-macOS-arm64.dmg"
+          cp dist/Superpaste.dmg "dist/${ASSET}"
+          shasum -a 256 "dist/${ASSET}" | tee "dist/${ASSET}.sha256"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Superpaste-v${{ inputs.version }}-macOS-arm64
+          path: |
+            dist/Superpaste-v${{ inputs.version }}-macOS-arm64.dmg
+            dist/Superpaste-v${{ inputs.version }}-macOS-arm64.dmg.sha256
+
+      - name: Create GitHub Release
+        if: ${{ inputs.publish_release == 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          VERSION="${{ inputs.version }}"
+          TAG="v${VERSION}"
+          ASSET="Superpaste-v${VERSION}-macOS-arm64.dmg"
+          SHA_LINE="$(cat "dist/${ASSET}.sha256")"
+          cat > /tmp/release-notes.md <<EOF
+macOS 14+，Apple Silicon / arm64。
+
+更新内容：
+- 增加原生浅色/深色应用图标。
+- 深色模式下图标显示更协调。
+
+macOS 14+, Apple Silicon / arm64.
+
+Changes:
+- Added native light and dark app icons.
+- Improved icon appearance in Dark Mode.
+
+SHA-256:
+
+\`\`\`text
+${SHA_LINE}
+\`\`\`
+EOF
+          gh release create "$TAG" "dist/${ASSET}" \
+            --repo "${{ github.repository }}" \
+            --target "${{ github.sha }}" \
+            --title "Superpaste ${VERSION} - macOS arm64" \
+            --notes-file /tmp/release-notes.md
