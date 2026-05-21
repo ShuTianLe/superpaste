@@ -518,33 +518,41 @@ struct ClipCard: View {
     let isSelected: Bool
     let thumbnailProvider: (ClipboardItem) -> NSImage?
     @State private var isHovering = false
+    private var typeStyle: ClipboardTypeStyle {
+        ClipboardTypeStyle(type: ClipboardTypeFilter(rawValue: item.primaryType))
+    }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 9) {
-            HStack(spacing: 8) {
-                Image(systemName: typeIcon)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                    .frame(width: 16)
-                Text(typeLabel)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 9) {
+                ClipboardTypeIcon(style: typeStyle, size: 31, isSelected: isSelected)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(typeLabel)
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(typeStyle.accent)
+                        .textCase(.uppercase)
+                        .lineLimit(1)
+                    Text(typeSubtitle)
+                        .font(.system(size: 10.5, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
                 Spacer(minLength: 0)
                 Text("\(index + 1)")
                     .font(.system(size: 11, weight: .bold))
                     .foregroundStyle(isSelected ? .white : .secondary)
                     .frame(width: 21, height: 21)
-                    .background(isSelected ? Color.accentColor : Color.primary.opacity(0.08), in: Circle())
-                    .shadow(color: isSelected ? Color.accentColor.opacity(0.26) : Color.clear, radius: 8, y: 2)
+                    .background(isSelected ? typeStyle.accent : Color.primary.opacity(0.08), in: Circle())
+                    .shadow(color: isSelected ? typeStyle.accent.opacity(0.28) : Color.clear, radius: 8, y: 2)
             }
 
             preview
-                .frame(maxWidth: .infinity, minHeight: 98, maxHeight: 98, alignment: .leading)
+                .frame(maxWidth: .infinity, minHeight: 92, maxHeight: 92, alignment: .leading)
 
             HStack(spacing: 6) {
                 if item.isPinned {
                     Image(systemName: "pin.fill")
-                        .foregroundStyle(.blue)
+                        .foregroundStyle(typeStyle.accent)
                 }
                 Text(item.sourceName ?? L10n.text("overlay.unknown"))
                     .lineLimit(1)
@@ -562,7 +570,7 @@ struct ClipCard: View {
         .scaleEffect(isSelected ? 1.035 : (isHovering ? 1.012 : 1.0))
         .offset(y: isSelected ? -5 : (isHovering ? -2 : 0))
         .shadow(color: Color.black.opacity(isSelected ? 0.23 : (isHovering ? 0.13 : 0.07)), radius: isSelected ? 22 : 11, x: 0, y: isSelected ? 14 : 6)
-        .shadow(color: Color.accentColor.opacity(isSelected ? 0.18 : 0), radius: 16, x: 0, y: 7)
+        .shadow(color: typeStyle.accent.opacity(isSelected ? 0.18 : 0), radius: 16, x: 0, y: 7)
         .animation(OverlayMotion.selection, value: isSelected)
         .animation(OverlayMotion.quick, value: isHovering)
         .onHover { hovering in
@@ -573,25 +581,20 @@ struct ClipCard: View {
     @ViewBuilder
     private var preview: some View {
         if let thumbnail = thumbnailProvider(item) {
-            Image(nsImage: thumbnail)
-                .resizable()
-                .scaledToFit()
-                .frame(maxWidth: .infinity, maxHeight: 98)
-                .clipShape(RoundedRectangle(cornerRadius: 7))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 7, style: .continuous)
-                        .stroke(Color.white.opacity(0.22), lineWidth: 1)
-                )
+            ThumbnailPreview(thumbnail: thumbnail, style: typeStyle, typeLabel: typeLabel)
         } else {
-            Text(PreviewTextFormatter.displayText(item.previewText))
-                .font(.system(size: 13, design: item.primaryType == ClipboardTypeFilter.code.rawValue ? .monospaced : .default))
-                .foregroundStyle(.primary)
-                .lineLimit(6)
-                .truncationMode(.tail)
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: .infinity, maxHeight: 98, alignment: .topLeading)
-                .clipped()
-                .allowsHitTesting(false)
+            switch ClipboardTypeFilter(rawValue: item.primaryType) {
+            case .url:
+                LinkCardPreview(text: item.previewText, style: typeStyle)
+            case .file:
+                FileCardPreview(text: item.previewText, style: typeStyle)
+            case .color:
+                ColorCardPreview(text: item.previewText, style: typeStyle)
+            case .code:
+                CodeCardPreview(text: item.previewText, style: typeStyle)
+            default:
+                TextCardPreview(text: item.previewText, style: typeStyle, isCode: item.primaryType == ClipboardTypeFilter.code.rawValue)
+            }
         }
     }
 
@@ -599,24 +602,24 @@ struct ClipCard: View {
         ClipboardTypeFilter(rawValue: item.primaryType)?.displayName ?? item.primaryType.capitalized
     }
 
-    private var typeIcon: String {
+    private var typeSubtitle: String {
         switch ClipboardTypeFilter(rawValue: item.primaryType) {
-        case .image:
-            return "photo"
-        case .file:
-            return "doc"
-        case .pdf:
-            return "doc.richtext"
         case .url:
-            return "link"
+            return ClipboardPreviewMetadata.host(from: item.previewText) ?? "Web link"
+        case .file:
+            return ClipboardPreviewMetadata.fileExtension(from: item.previewText).map { "\($0.uppercased()) file" } ?? "Local file"
+        case .pdf:
+            return "Document"
+        case .image:
+            return "Visual item"
         case .code:
-            return "curlybraces"
+            return "Snippet"
         case .richText:
-            return "textformat"
+            return "Formatted text"
         case .color:
-            return "paintpalette"
+            return ClipboardPreviewMetadata.colorHex(from: item.previewText) ?? "Color value"
         default:
-            return "text.alignleft"
+            return "\(max(item.previewText.count, 1)) chars"
         }
     }
 
@@ -625,7 +628,16 @@ struct ClipCard: View {
             .fill(.ultraThinMaterial)
             .overlay(
                 RoundedRectangle(cornerRadius: 11, style: .continuous)
-                    .fill(isSelected ? Color.accentColor.opacity(0.105) : Color(nsColor: .controlBackgroundColor).opacity(isHovering ? 0.50 : 0.32))
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                typeStyle.accent.opacity(isSelected ? 0.17 : (isHovering ? 0.11 : 0.075)),
+                                Color(nsColor: .controlBackgroundColor).opacity(isHovering ? 0.44 : 0.30)
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
             )
     }
 
@@ -635,7 +647,7 @@ struct ClipCard: View {
                 LinearGradient(
                     colors: [
                         Color.white.opacity(isSelected ? 0.62 : 0.30),
-                        Color.accentColor.opacity(isSelected ? 0.72 : 0.10),
+                        typeStyle.accent.opacity(isSelected ? 0.78 : 0.18),
                         Color.primary.opacity(isSelected ? 0.10 : 0.07)
                     ],
                     startPoint: .topLeading,
@@ -651,6 +663,7 @@ struct ClipCard: View {
                 LinearGradient(
                     colors: [
                         Color.white.opacity(isSelected ? 0.32 : 0.16),
+                        typeStyle.accent.opacity(isSelected ? 0.12 : 0.055),
                         Color.white.opacity(0.04),
                         Color.clear
                     ],
@@ -660,6 +673,495 @@ struct ClipCard: View {
             )
             .frame(height: 74)
             .allowsHitTesting(false)
+    }
+}
+
+private struct ClipboardTypeStyle {
+    let type: ClipboardTypeFilter?
+
+    var accent: Color {
+        switch type {
+        case .url:
+            return Color(red: 0.00, green: 0.55, blue: 0.78)
+        case .file:
+            return Color(red: 0.38, green: 0.35, blue: 0.86)
+        case .pdf:
+            return Color(red: 0.88, green: 0.18, blue: 0.22)
+        case .image:
+            return Color(red: 0.10, green: 0.60, blue: 0.42)
+        case .code:
+            return Color(red: 0.72, green: 0.42, blue: 0.10)
+        case .richText:
+            return Color(red: 0.65, green: 0.28, blue: 0.70)
+        case .color:
+            return Color(red: 0.95, green: 0.46, blue: 0.12)
+        default:
+            return Color(red: 0.28, green: 0.48, blue: 0.78)
+        }
+    }
+
+    var secondary: Color {
+        switch type {
+        case .url:
+            return Color(red: 0.32, green: 0.86, blue: 0.82)
+        case .file:
+            return Color(red: 0.50, green: 0.64, blue: 0.98)
+        case .pdf:
+            return Color(red: 1.00, green: 0.54, blue: 0.40)
+        case .image:
+            return Color(red: 0.52, green: 0.80, blue: 0.36)
+        case .code:
+            return Color(red: 0.98, green: 0.74, blue: 0.22)
+        case .richText:
+            return Color(red: 0.88, green: 0.56, blue: 0.92)
+        case .color:
+            return Color(red: 1.00, green: 0.72, blue: 0.22)
+        default:
+            return Color(red: 0.55, green: 0.68, blue: 0.84)
+        }
+    }
+}
+
+private struct ClipboardTypeIcon: View {
+    let style: ClipboardTypeStyle
+    let size: CGFloat
+    let isSelected: Bool
+
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: size * 0.28, style: .continuous)
+                .fill(
+                    LinearGradient(
+                        colors: [
+                            style.secondary.opacity(isSelected ? 0.95 : 0.78),
+                            style.accent.opacity(isSelected ? 0.98 : 0.72)
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+            RoundedRectangle(cornerRadius: size * 0.28, style: .continuous)
+                .stroke(Color.white.opacity(0.44), lineWidth: 1)
+            icon
+                .foregroundStyle(.white)
+                .shadow(color: .black.opacity(0.18), radius: 2, y: 1)
+        }
+        .frame(width: size, height: size)
+        .shadow(color: style.accent.opacity(isSelected ? 0.28 : 0.10), radius: isSelected ? 9 : 5, y: 3)
+    }
+
+    @ViewBuilder
+    private var icon: some View {
+        switch style.type {
+        case .url:
+            LinkGlyph()
+        case .file:
+            FileGlyph()
+        case .pdf:
+            PDFGlyph()
+        case .image:
+            ImageGlyph()
+        case .code:
+            CodeGlyph()
+        case .richText:
+            RichTextGlyph()
+        case .color:
+            ColorGlyph()
+        default:
+            TextGlyph()
+        }
+    }
+}
+
+private struct LinkGlyph: View {
+    var body: some View {
+        ZStack {
+            Capsule()
+                .stroke(lineWidth: 2.2)
+                .frame(width: 15, height: 8)
+                .rotationEffect(.degrees(-35))
+                .offset(x: -3, y: 2)
+            Capsule()
+                .stroke(lineWidth: 2.2)
+                .frame(width: 15, height: 8)
+                .rotationEffect(.degrees(-35))
+                .offset(x: 4, y: -3)
+        }
+    }
+}
+
+private struct FileGlyph: View {
+    var body: some View {
+        ZStack(alignment: .topTrailing) {
+            RoundedRectangle(cornerRadius: 2.8, style: .continuous)
+                .fill(Color.white.opacity(0.95))
+                .frame(width: 16, height: 19)
+            Path { path in
+                path.move(to: CGPoint(x: 10, y: 0))
+                path.addLine(to: CGPoint(x: 16, y: 6))
+                path.addLine(to: CGPoint(x: 10, y: 6))
+                path.closeSubpath()
+            }
+            .fill(Color.black.opacity(0.16))
+            .frame(width: 16, height: 19)
+            VStack(spacing: 2.2) {
+                Capsule().frame(width: 8, height: 1.4)
+                Capsule().frame(width: 10, height: 1.4)
+                Capsule().frame(width: 7, height: 1.4)
+            }
+            .foregroundStyle(Color.black.opacity(0.32))
+            .offset(x: -3.2, y: 9)
+        }
+    }
+}
+
+private struct PDFGlyph: View {
+    var body: some View {
+        ZStack {
+            FileGlyph()
+            Text("PDF")
+                .font(.system(size: 5.5, weight: .black))
+                .foregroundStyle(.red)
+                .offset(y: 4.4)
+        }
+    }
+}
+
+private struct ImageGlyph: View {
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 3, style: .continuous)
+                .stroke(lineWidth: 2)
+                .frame(width: 18, height: 15)
+            Circle()
+                .frame(width: 3.5, height: 3.5)
+                .offset(x: 4.8, y: -3.6)
+            Path { path in
+                path.move(to: CGPoint(x: -8, y: 5))
+                path.addLine(to: CGPoint(x: -2, y: -1))
+                path.addLine(to: CGPoint(x: 2, y: 3))
+                path.addLine(to: CGPoint(x: 6.5, y: -2))
+                path.addLine(to: CGPoint(x: 9, y: 5))
+            }
+            .stroke(style: StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
+        }
+    }
+}
+
+private struct CodeGlyph: View {
+    var body: some View {
+        HStack(spacing: 2.5) {
+            Text("<")
+            Text("/")
+            Text(">")
+        }
+        .font(.system(size: 12, weight: .black, design: .monospaced))
+    }
+}
+
+private struct RichTextGlyph: View {
+    var body: some View {
+        HStack(alignment: .lastTextBaseline, spacing: 1.5) {
+            Text("A")
+                .font(.system(size: 15, weight: .black, design: .serif))
+            Text("a")
+                .font(.system(size: 10, weight: .bold, design: .serif))
+        }
+    }
+}
+
+private struct ColorGlyph: View {
+    var body: some View {
+        ZStack {
+            Circle().frame(width: 10, height: 10).offset(x: -4, y: 3)
+            Circle().frame(width: 10, height: 10).offset(x: 4, y: 3)
+            Circle().frame(width: 10, height: 10).offset(y: -4)
+        }
+    }
+}
+
+private struct TextGlyph: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Capsule().frame(width: 15, height: 2)
+            Capsule().frame(width: 18, height: 2)
+            Capsule().frame(width: 11, height: 2)
+        }
+    }
+}
+
+private struct ThumbnailPreview: View {
+    let thumbnail: NSImage
+    let style: ClipboardTypeStyle
+    let typeLabel: String
+
+    var body: some View {
+        ZStack(alignment: .topTrailing) {
+            Image(nsImage: thumbnail)
+                .resizable()
+                .scaledToFit()
+                .frame(maxWidth: .infinity, maxHeight: 92)
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .stroke(Color.white.opacity(0.24), lineWidth: 1)
+                )
+            Text(typeLabel)
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(.white)
+                .padding(.horizontal, 6)
+                .frame(height: 18)
+                .background(style.accent.opacity(0.88), in: Capsule())
+                .padding(6)
+        }
+        .frame(maxWidth: .infinity, maxHeight: 92)
+    }
+}
+
+private struct LinkCardPreview: View {
+    let text: String
+    let style: ClipboardTypeStyle
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 7) {
+                Image(systemName: "globe")
+                    .font(.system(size: 11, weight: .semibold))
+                Text(ClipboardPreviewMetadata.host(from: text) ?? "Link")
+                    .font(.system(size: 13, weight: .bold))
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+                Image(systemName: "arrow.up.right")
+                    .font(.system(size: 10, weight: .bold))
+            }
+            .foregroundStyle(style.accent)
+
+            Text(ClipboardPreviewMetadata.urlPathSummary(from: text))
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+
+            Text(PreviewTextFormatter.displayText(text, maxCharacters: 150, breakEvery: 18))
+                .font(.system(size: 10.5, design: .monospaced))
+                .foregroundStyle(.secondary.opacity(0.85))
+                .lineLimit(2)
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, maxHeight: 92, alignment: .topLeading)
+        .background(typePreviewBackground(style))
+        .allowsHitTesting(false)
+    }
+}
+
+private struct FileCardPreview: View {
+    let text: String
+    let style: ClipboardTypeStyle
+
+    var body: some View {
+        HStack(spacing: 10) {
+            ClipboardTypeIcon(style: style, size: 46, isSelected: false)
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text(ClipboardPreviewMetadata.fileName(from: text))
+                    .font(.system(size: 13, weight: .bold))
+                    .lineLimit(2)
+                Text(ClipboardPreviewMetadata.filePathSummary(from: text))
+                    .font(.system(size: 10.5, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                if let ext = ClipboardPreviewMetadata.fileExtension(from: text) {
+                    Text(ext.uppercased())
+                        .font(.system(size: 9, weight: .black))
+                        .foregroundStyle(style.accent)
+                        .padding(.horizontal, 6)
+                        .frame(height: 17)
+                        .background(style.accent.opacity(0.12), in: Capsule())
+                }
+            }
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, maxHeight: 92, alignment: .leading)
+        .background(typePreviewBackground(style))
+        .allowsHitTesting(false)
+    }
+}
+
+private struct ColorCardPreview: View {
+    let text: String
+    let style: ClipboardTypeStyle
+
+    var body: some View {
+        let color = ClipboardPreviewMetadata.color(from: text) ?? style.accent
+        HStack(spacing: 10) {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(color)
+                .frame(width: 54, height: 58)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .stroke(Color.white.opacity(0.42), lineWidth: 1)
+                )
+                .shadow(color: color.opacity(0.24), radius: 10, y: 4)
+
+            VStack(alignment: .leading, spacing: 7) {
+                Text(ClipboardPreviewMetadata.colorHex(from: text) ?? "Color")
+                    .font(.system(size: 15, weight: .black, design: .rounded))
+                    .lineLimit(1)
+                Text(PreviewTextFormatter.displayText(text, maxCharacters: 88))
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, maxHeight: 92, alignment: .leading)
+        .background(typePreviewBackground(style))
+        .allowsHitTesting(false)
+    }
+}
+
+private struct CodeCardPreview: View {
+    let text: String
+    let style: ClipboardTypeStyle
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(spacing: 4) {
+                Circle().fill(Color.red.opacity(0.72)).frame(width: 6, height: 6)
+                Circle().fill(Color.yellow.opacity(0.72)).frame(width: 6, height: 6)
+                Circle().fill(Color.green.opacity(0.72)).frame(width: 6, height: 6)
+                Spacer(minLength: 0)
+            }
+            Text(PreviewTextFormatter.displayText(text, maxCharacters: 260, breakEvery: 24))
+                .font(.system(size: 11.3, weight: .medium, design: .monospaced))
+                .foregroundStyle(.primary)
+                .lineLimit(5)
+                .truncationMode(.tail)
+        }
+        .padding(9)
+        .frame(maxWidth: .infinity, maxHeight: 92, alignment: .topLeading)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(Color.black.opacity(0.09))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .stroke(style.accent.opacity(0.28), lineWidth: 1)
+                )
+        )
+        .clipped()
+        .allowsHitTesting(false)
+    }
+}
+
+private struct TextCardPreview: View {
+    let text: String
+    let style: ClipboardTypeStyle
+    let isCode: Bool
+
+    var body: some View {
+        Text(PreviewTextFormatter.displayText(text))
+            .font(.system(size: 13, design: isCode ? .monospaced : .default))
+            .foregroundStyle(.primary)
+            .lineLimit(6)
+            .truncationMode(.tail)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, maxHeight: 92, alignment: .topLeading)
+            .padding(1)
+            .clipped()
+            .allowsHitTesting(false)
+    }
+}
+
+private func typePreviewBackground(_ style: ClipboardTypeStyle) -> some View {
+    RoundedRectangle(cornerRadius: 8, style: .continuous)
+        .fill(style.accent.opacity(0.065))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(style.accent.opacity(0.16), lineWidth: 1)
+        )
+}
+
+private enum ClipboardPreviewMetadata {
+    static func host(from text: String) -> String? {
+        normalizedURL(from: text)?.host(percentEncoded: false)
+    }
+
+    static func urlPathSummary(from text: String) -> String {
+        guard let url = normalizedURL(from: text) else {
+            return PreviewTextFormatter.displayText(text, maxCharacters: 90, breakEvery: 20)
+        }
+        let path = url.path(percentEncoded: false)
+        if path.isEmpty || path == "/" {
+            return url.scheme.map { "\($0.uppercased()) link" } ?? "Web link"
+        }
+        return PreviewTextFormatter.displayText(path, maxCharacters: 90, breakEvery: 18)
+    }
+
+    static func fileName(from text: String) -> String {
+        let first = firstLine(from: text)
+        let url = URL(string: first)
+        let path = url?.isFileURL == true ? (url?.path(percentEncoded: false) ?? first) : first
+        let name = URL(fileURLWithPath: path).lastPathComponent
+        return name.isEmpty ? "File" : name
+    }
+
+    static func filePathSummary(from text: String) -> String {
+        let first = firstLine(from: text)
+        let url = URL(string: first)
+        let path = url?.isFileURL == true ? (url?.path(percentEncoded: false) ?? first) : first
+        let parent = URL(fileURLWithPath: path).deletingLastPathComponent().path
+        return parent.isEmpty || parent == "/" ? "Local file" : parent
+    }
+
+    static func fileExtension(from text: String) -> String? {
+        let ext = URL(fileURLWithPath: fileName(from: text)).pathExtension
+        return ext.isEmpty ? nil : ext
+    }
+
+    static func colorHex(from text: String) -> String? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let match = trimmed.range(of: #"#[0-9A-Fa-f]{6}([0-9A-Fa-f]{2})?"#, options: .regularExpression) {
+            return String(trimmed[match]).uppercased()
+        }
+        return nil
+    }
+
+    static func color(from text: String) -> Color? {
+        guard let hex = colorHex(from: text) else { return nil }
+        let clean = hex.dropFirst()
+        guard clean.count == 6 || clean.count == 8,
+              let int = UInt64(clean, radix: 16)
+        else {
+            return nil
+        }
+        let r: UInt64
+        let g: UInt64
+        let b: UInt64
+        if clean.count == 8 {
+            r = (int >> 24) & 0xff
+            g = (int >> 16) & 0xff
+            b = (int >> 8) & 0xff
+        } else {
+            r = (int >> 16) & 0xff
+            g = (int >> 8) & 0xff
+            b = int & 0xff
+        }
+        return Color(.sRGB, red: Double(r) / 255, green: Double(g) / 255, blue: Double(b) / 255, opacity: 1)
+    }
+
+    private static func normalizedURL(from text: String) -> URL? {
+        let trimmed = firstLine(from: text)
+        if let url = URL(string: trimmed), url.scheme != nil {
+            return url
+        }
+        return URL(string: "https://\(trimmed)")
+    }
+
+    private static func firstLine(from text: String) -> String {
+        text
+            .split(whereSeparator: \.isNewline)
+            .first
+            .map(String.init)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? text.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
 
