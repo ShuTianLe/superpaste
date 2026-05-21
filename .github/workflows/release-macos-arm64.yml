@@ -109,24 +109,25 @@ jobs:
           ASSET="Superpaste-v${VERSION}-macOS-arm64.dmg"
           SHA_LINE="$(cat "dist/${ASSET}.sha256")"
           cat > /tmp/release-notes.md <<EOF
-macOS 14+，Apple Silicon / arm64。
+          macOS 14+，Apple Silicon / arm64。
 
-更新内容：
-- 增加原生浅色/深色应用图标。
-- 深色模式下图标显示更协调。
+          更新内容：
+          - 增加原生浅色/深色应用图标。
+          - 深色模式下图标显示更协调。
 
-macOS 14+, Apple Silicon / arm64.
+          macOS 14+, Apple Silicon / arm64.
 
-Changes:
-- Added native light and dark app icons.
-- Improved icon appearance in Dark Mode.
+          Changes:
+          - Added native light and dark app icons.
+          - Improved icon appearance in Dark Mode.
 
-SHA-256:
+          SHA-256:
 
-\`\`\`text
-${SHA_LINE}
-\`\`\`
-EOF
+          \`\`\`text
+          ${SHA_LINE}
+          \`\`\`
+          EOF
+          sed -i '' 's/^          //' /tmp/release-notes.md
           gh release create "$TAG" "dist/${ASSET}" \
             --repo "${{ github.repository }}" \
             --target "${{ github.sha }}" \
