@@ -6,8 +6,6 @@ APP="$ROOT/dist/Superpaste.app"
 DMG="$ROOT/dist/Superpaste.dmg"
 STAGING="$ROOT/dist/dmg-stage"
 VOLUME_NAME="Superpaste"
-BACKGROUND_DIR=".background"
-BACKGROUND_NAME="background.png"
 WINDOW_WIDTH=640
 WINDOW_HEIGHT=420
 
@@ -15,9 +13,8 @@ WINDOW_HEIGHT=420
 
 rm -f "$DMG"
 rm -rf "$STAGING"
-mkdir -p "$STAGING/$BACKGROUND_DIR"
+mkdir -p "$STAGING"
 cp -R "$APP" "$STAGING/"
-cp "$ROOT/Resources/DMG/$BACKGROUND_NAME" "$STAGING/$BACKGROUND_DIR/$BACKGROUND_NAME"
 ln -s /Applications "$STAGING/Applications"
 
 TMP_DMG="$ROOT/dist/Superpaste.tmp.dmg"
@@ -39,7 +36,6 @@ tell application "Finder"
 	    set viewOptions to the icon view options of container window
 	    set arrangement of viewOptions to not arranged
 	    set icon size of viewOptions to 96
-	    set background picture of viewOptions to file "$BACKGROUND_DIR:$BACKGROUND_NAME"
 	    set position of item "Superpaste.app" of container window to {190, 210}
 	    set position of item "Applications" of container window to {450, 210}
 	    close
