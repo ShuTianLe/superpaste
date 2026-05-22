@@ -19,6 +19,15 @@ func expect(_ condition: @autoclosure () -> Bool, _ message: String) throws {
     }
 }
 
+func executeSQLite(databaseURL: URL, sql: String) throws {
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/sqlite3")
+    process.arguments = [databaseURL.path, sql]
+    try process.run()
+    process.waitUntilExit()
+    try expect(process.terminationStatus == 0, "sqlite3 command should succeed")
+}
+
 func testHashingIsStableAcrossPayloadOrder() throws {
     let first = ClipboardPayload(uti: "public.utf8-plain-text", data: Data("hello".utf8))
     let second = ClipboardPayload(uti: "public.url", data: Data("https://example.com".utf8))
@@ -198,6 +207,106 @@ func testStorageUsageAndClearActions() throws {
     try expect(previews.isEmpty, "deleteAllItems should remove every history item")
 }
 
+func testTogglePinnedSyncsDefaultPinboard() throws {
+    let temp = FileManager.default.temporaryDirectory
+        .appendingPathComponent("ClipShelfTests-\(UUID().uuidString)", isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: temp) }
+
+    let store = try ClipboardStore(baseURL: temp, keyProvider: StaticKeyStore(key: SymmetricKey(size: .bits256)))
+    let payload = ClipboardPayload(uti: "public.utf8-plain-text", data: Data("toggle pinned".utf8))
+    let item = ClipboardItem(
+        sourceBundleId: nil,
+        sourceName: nil,
+        primaryType: ClipboardTypeFilter.text.rawValue,
+        previewText: "toggle pinned",
+        contentHash: Hashing.contentHash(payloads: [payload])
+    )
+
+    guard let inserted = try store.addCapturedItem(PendingClipboardItem(item: item, payloads: [payload])) else {
+        throw SmokeTestFailure.failed("insert should create an item")
+    }
+
+    let board = try store.pinboards().first
+    guard let board else {
+        throw SmokeTestFailure.failed("default pinboard should exist")
+    }
+
+    try store.togglePinned(itemId: inserted.id)
+    var pinnedItems = try store.items(pinboardId: board.id)
+    try expect(pinnedItems.map(\.id) == [inserted.id], "toggle pin should add item to default pinned board")
+    try expect(pinnedItems.first?.isPinned == true, "pinned board item should be marked pinned")
+
+    try store.togglePinned(itemId: inserted.id)
+    pinnedItems = try store.items(pinboardId: board.id)
+    try expect(pinnedItems.isEmpty, "toggle unpin should remove item from default pinned board")
+    let recentItems = try store.items()
+    try expect(recentItems.contains { $0.id == inserted.id }, "unpin should keep item in recent history")
+}
+
+func testPinboardRepairBackfillsPinnedItems() throws {
+    let temp = FileManager.default.temporaryDirectory
+        .appendingPathComponent("ClipShelfTests-\(UUID().uuidString)", isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: temp) }
+
+    let store = try ClipboardStore(baseURL: temp, keyProvider: StaticKeyStore(key: SymmetricKey(size: .bits256)))
+    let payload = ClipboardPayload(uti: "public.utf8-plain-text", data: Data("legacy pinned".utf8))
+    var item = ClipboardItem(
+        sourceBundleId: nil,
+        sourceName: nil,
+        primaryType: ClipboardTypeFilter.text.rawValue,
+        previewText: "legacy pinned",
+        contentHash: Hashing.contentHash(payloads: [payload])
+    )
+    item.isPinned = true
+
+    guard let inserted = try store.addCapturedItem(PendingClipboardItem(item: item, payloads: [payload])) else {
+        throw SmokeTestFailure.failed("insert should create a legacy pinned item")
+    }
+
+    let board = try store.pinboards().first
+    guard let board else {
+        throw SmokeTestFailure.failed("default pinboard should exist")
+    }
+
+    let pinnedItems = try store.items(pinboardId: board.id)
+    try expect(pinnedItems.map(\.id) == [inserted.id], "pinboard repair should backfill legacy pinned items")
+}
+
+func testPinboardRepairRemovesStaleUnpinnedMembership() throws {
+    let temp = FileManager.default.temporaryDirectory
+        .appendingPathComponent("ClipShelfTests-\(UUID().uuidString)", isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: temp) }
+
+    let store = try ClipboardStore(baseURL: temp, keyProvider: StaticKeyStore(key: SymmetricKey(size: .bits256)))
+    let payload = ClipboardPayload(uti: "public.utf8-plain-text", data: Data("stale member".utf8))
+    let item = ClipboardItem(
+        sourceBundleId: nil,
+        sourceName: nil,
+        primaryType: ClipboardTypeFilter.text.rawValue,
+        previewText: "stale member",
+        contentHash: Hashing.contentHash(payloads: [payload])
+    )
+
+    guard let inserted = try store.addCapturedItem(PendingClipboardItem(item: item, payloads: [payload])) else {
+        throw SmokeTestFailure.failed("insert should create an item")
+    }
+    guard let board = try store.pinboards().first else {
+        throw SmokeTestFailure.failed("default pinboard should exist")
+    }
+
+    try executeSQLite(
+        databaseURL: temp.appendingPathComponent("clipshelf.sqlite"),
+        sql: """
+        INSERT OR REPLACE INTO pinboard_items (pinboard_id, item_id, position)
+        VALUES ('\(board.id.uuidString)', '\(inserted.id.uuidString)', 0);
+        """
+    )
+    _ = try store.pinboards()
+
+    let pinnedItems = try store.items(pinboardId: board.id)
+    try expect(pinnedItems.isEmpty, "pinboard repair should remove stale unpinned memberships")
+}
+
 let tests: [(String, () throws -> Void)] = [
     ("hashing order stability", testHashingIsStableAcrossPayloadOrder),
     ("privacy concealed type skip", testPrivacySkipsDefaultConcealedTypes),
@@ -205,7 +314,10 @@ let tests: [(String, () throws -> Void)] = [
     ("encrypted store round trip", testEncryptedStoreRoundTripsPayloadsAndDeduplicates),
     ("retention cleanup keeps pinned items", testRetentionCleanupKeepsPinnedItems),
     ("retention cleanup supports hours", testRetentionCleanupSupportsHours),
-    ("storage usage and clear actions", testStorageUsageAndClearActions)
+    ("storage usage and clear actions", testStorageUsageAndClearActions),
+    ("toggle pinned syncs default pinboard", testTogglePinnedSyncsDefaultPinboard),
+    ("pinboard repair backfills pinned items", testPinboardRepairBackfillsPinnedItems),
+    ("pinboard repair removes stale unpinned membership", testPinboardRepairRemovesStaleUnpinnedMembership)
 ]
 
 do {

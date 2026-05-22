@@ -125,11 +125,27 @@ public final class ClipboardStore {
     }
 
     public func togglePinned(itemId: UUID) throws {
-        let rows = try database.query("SELECT is_pinned FROM clipboard_items WHERE id = ?", [.uuid(itemId)])
-        guard let current = rows.first?["is_pinned"]?.boolValue else {
-            return
+        try database.execute("BEGIN IMMEDIATE")
+        do {
+            let rows = try database.query("SELECT is_pinned FROM clipboard_items WHERE id = ?", [.uuid(itemId)])
+            guard let current = rows.first?["is_pinned"]?.boolValue else {
+                try database.execute("COMMIT")
+                return
+            }
+
+            let pinned = !current
+            let board = try defaultPinboard()
+            try database.execute("UPDATE clipboard_items SET is_pinned = ? WHERE id = ?", [.bool(pinned), .uuid(itemId)])
+            if pinned {
+                try insertIntoDefaultPinned(itemId: itemId, pinboardId: board.id)
+            } else {
+                try removeFromDefaultPinned(itemId: itemId, pinboardId: board.id)
+            }
+            try database.execute("COMMIT")
+        } catch {
+            try? database.execute("ROLLBACK")
+            throw error
         }
-        try database.execute("UPDATE clipboard_items SET is_pinned = ? WHERE id = ?", [.bool(!current), .uuid(itemId)])
     }
 
     public func delete(itemId: UUID) throws {
@@ -142,16 +158,9 @@ public final class ClipboardStore {
     }
 
     public func pinboards() throws -> [Pinboard] {
+        let board = try defaultPinboard()
+        try repairDefaultPinnedMembership(pinboardId: board.id)
         let rows = try database.query("SELECT * FROM pinboards ORDER BY sort_order ASC, created_at ASC")
-        if rows.isEmpty {
-            let inbox = Pinboard(
-                name: AppLocalization.text("overlay.pinboard", value: "Pinned"),
-                color: "#53A2FF",
-                sortOrder: 0
-            )
-            try addPinboard(inbox)
-            return [inbox]
-        }
         return rows.compactMap(pinboard(from:))
     }
 
@@ -350,6 +359,69 @@ public final class ClipboardStore {
     private func itemExists(contentHash: String) throws -> Bool {
         let rows = try database.query("SELECT id FROM clipboard_items WHERE content_hash = ? LIMIT 1", [.text(contentHash)])
         return !rows.isEmpty
+    }
+
+    private func defaultPinboard() throws -> Pinboard {
+        if let row = try database.query("SELECT * FROM pinboards ORDER BY sort_order ASC, created_at ASC LIMIT 1").first,
+           let pinboard = pinboard(from: row) {
+            return pinboard
+        }
+
+        let inbox = Pinboard(
+            name: AppLocalization.text("overlay.pinboard", value: "Pinned"),
+            color: "#53A2FF",
+            sortOrder: 0
+        )
+        return try addPinboard(inbox)
+    }
+
+    private func insertIntoDefaultPinned(itemId: UUID, pinboardId: UUID) throws {
+        let row = try database.query(
+            "SELECT COALESCE(MAX(position), -1) + 1 AS next_position FROM pinboard_items WHERE pinboard_id = ?",
+            [.uuid(pinboardId)]
+        ).first
+        let next = row?["next_position"]?.intValue ?? 0
+        try database.execute(
+            """
+            INSERT OR IGNORE INTO pinboard_items (pinboard_id, item_id, position)
+            VALUES (?, ?, ?)
+            """,
+            [.uuid(pinboardId), .uuid(itemId), .int(Int64(next))]
+        )
+    }
+
+    private func removeFromDefaultPinned(itemId: UUID, pinboardId: UUID) throws {
+        try database.execute(
+            "DELETE FROM pinboard_items WHERE pinboard_id = ? AND item_id = ?",
+            [.uuid(pinboardId), .uuid(itemId)]
+        )
+    }
+
+    private func repairDefaultPinnedMembership(pinboardId: UUID) throws {
+        try database.execute(
+            """
+            DELETE FROM pinboard_items
+            WHERE pinboard_id = ?
+              AND item_id IN (SELECT id FROM clipboard_items WHERE is_pinned = 0)
+            """,
+            [.uuid(pinboardId)]
+        )
+
+        let rows = try database.query(
+            """
+            SELECT id FROM clipboard_items
+            WHERE is_pinned = 1
+              AND id NOT IN (SELECT item_id FROM pinboard_items WHERE pinboard_id = ?)
+            ORDER BY created_at DESC
+            """,
+            [.uuid(pinboardId)]
+        )
+        for row in rows {
+            guard let itemId = row["id"]?.stringValue.flatMap(UUID.init(uuidString:)) else {
+                continue
+            }
+            try insertIntoDefaultPinned(itemId: itemId, pinboardId: pinboardId)
+        }
     }
 
     private func insertItem(_ item: ClipboardItem) throws {
