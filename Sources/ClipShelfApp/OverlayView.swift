@@ -6,9 +6,8 @@ struct OverlayView: View {
     @ObservedObject var controller: ClipShelfController
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @FocusState private var searchFocused: Bool
-    @State private var thumbnailCache = OverlayThumbnailCache()
-    @State private var cardFrames: [UUID: CGRect] = [:]
-    @State private var timelineWidth: CGFloat = 0
+    @StateObject private var thumbnailCache = OverlayThumbnailCache()
+    @State private var hoveredItemID: UUID?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -23,10 +22,12 @@ struct OverlayView: View {
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .onAppear {
             searchFocused = false
+            hoveredItemID = nil
             controller.accessibilityTrusted = AccessibilityPermission.isTrusted
         }
         .onChange(of: controller.overlayFocusResetRequest) { _, _ in
             searchFocused = false
+            hoveredItemID = nil
         }
         .onChange(of: controller.searchFocusRequest) { _, request in
             guard request > 0 else {
@@ -38,7 +39,9 @@ struct OverlayView: View {
         .onChange(of: controller.items) { _, items in
             let itemIds = Set(items.map(\.id))
             thumbnailCache.retain(itemIds: itemIds)
-            cardFrames = cardFrames.filter { itemIds.contains($0.key) }
+            if let hoveredItemID, !itemIds.contains(hoveredItemID) {
+                self.hoveredItemID = nil
+            }
         }
         .onExitCommand {
             controller.hideOverlay()
@@ -144,104 +147,86 @@ struct OverlayView: View {
     }
 
     private var timeline: some View {
-        ScrollViewReader { proxy in
-            ScrollView(.horizontal, showsIndicators: false) {
-                LazyHStack(spacing: 10) {
-                    if controller.items.isEmpty {
-                        EmptyClipsView()
-                            .frame(width: 440, height: 196)
-                    } else {
-                        ForEach(Array(controller.items.enumerated()), id: \.element.id) { index, item in
-                            ClipCard(
-                                index: index,
-                                item: item,
-                                isSelected: controller.selectedIndex == index,
-                                thumbnailProvider: thumbnail(for:)
-                            )
-                            .equatable()
-                            .id(item.id)
-                            .background {
-                                GeometryReader { geometry in
-                                    Color.clear.preference(
-                                        key: CardFramePreferenceKey.self,
-                                        value: [item.id: geometry.frame(in: .named(TimelineCoordinateSpace.name))]
-                                    )
-                                }
-                            }
-                            .contentShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
-                            .overlay {
-                                CardClickSurface(
-                                    onSingleClick: {
-                                        controller.selectItem(at: index)
-                                    },
-                                    onDoubleClick: {
-                                        controller.selectItem(at: index)
-                                        controller.paste(item)
+        ScrollView(.horizontal, showsIndicators: false) {
+            LazyHStack(spacing: 10) {
+                if controller.items.isEmpty {
+                    EmptyClipsView()
+                        .frame(width: 440, height: 196)
+                } else {
+                    ForEach(Array(controller.items.enumerated()), id: \.element.id) { index, item in
+                        ClipCard(
+                            index: index,
+                            item: item,
+                            isSelected: controller.selectedIndex == index,
+                            isHovered: hoveredItemID == item.id,
+                            thumbnailProvider: thumbnail(for:)
+                        )
+                        .equatable()
+                        .contentShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
+                        .overlay {
+                            CardClickSurface(
+                                onSingleClick: {
+                                    controller.selectItem(at: index)
+                                },
+                                onDoubleClick: {
+                                    controller.selectItem(at: index)
+                                    controller.paste(item)
+                                },
+                                onHoverChanged: { hovering in
+                                    if hovering {
+                                        hoveredItemID = item.id
+                                    } else if hoveredItemID == item.id {
+                                        hoveredItemID = nil
                                     }
-                                )
-                                .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
-                            }
-                            .contextMenu {
-                                Button(L10n.text("context.paste")) { controller.paste(item) }
-                                Button(L10n.text("context.pastePlain")) { controller.paste(item, asPlainText: true) }
-                                Button(L10n.text("context.copyPlain")) { controller.copyPlainText(item) }
-                                Button(item.isPinned ? L10n.text("context.unpin") : L10n.text("context.pin")) { controller.togglePin(item) }
-                                Button(L10n.text("context.addPinboard")) { controller.assignToFirstPinboard(item) }
-                                Divider()
-                                Button(L10n.text("context.delete"), role: .destructive) { controller.delete(item) }
-                            }
+                                }
+                            )
+                            .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
+                        }
+                        .contextMenu {
+                            Button(L10n.text("context.paste")) { controller.paste(item) }
+                            Button(L10n.text("context.pastePlain")) { controller.paste(item, asPlainText: true) }
+                            Button(L10n.text("context.copyPlain")) { controller.copyPlainText(item) }
+                            Button(item.isPinned ? L10n.text("context.unpin") : L10n.text("context.pin")) { controller.togglePin(item) }
+                            Button(L10n.text("context.addPinboard")) { controller.assignToFirstPinboard(item) }
+                            Divider()
+                            Button(L10n.text("context.delete"), role: .destructive) { controller.delete(item) }
                         }
                     }
                 }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 14)
             }
-            .coordinateSpace(name: TimelineCoordinateSpace.name)
-            .background {
-                GeometryReader { geometry in
-                    Color.clear.preference(key: TimelineWidthPreferenceKey.self, value: geometry.size.width)
-                }
-            }
-            .mask(
-                LinearGradient(
-                    stops: [
-                        .init(color: .clear, location: 0),
-                        .init(color: .black, location: 0.035),
-                        .init(color: .black, location: 0.965),
-                        .init(color: .clear, location: 1)
-                    ],
-                    startPoint: .leading,
-                    endPoint: .trailing
-                )
+            .padding(.horizontal, 14)
+            .padding(.vertical, 14)
+        }
+        .mask(
+            LinearGradient(
+                stops: [
+                    .init(color: .clear, location: 0),
+                    .init(color: .black, location: 0.035),
+                    .init(color: .black, location: 0.965),
+                    .init(color: .clear, location: 1)
+                ],
+                startPoint: .leading,
+                endPoint: .trailing
             )
-            .background(HorizontalWheelScrollSurface())
-            .onPreferenceChange(CardFramePreferenceKey.self) { cardFrames = $0 }
-            .onPreferenceChange(TimelineWidthPreferenceKey.self) { timelineWidth = $0 }
-            .onChange(of: controller.selectionScrollRequest) { _, request in
-                guard let request,
-                      shouldScroll(to: request.itemID, direction: request.direction)
-                else {
-                    return
-                }
-                let anchor = scrollAnchor(for: request.direction)
-                let animation = request.animated && !reduceMotion ? OverlayMotion.scrollFast : nil
-                withAnimation(animation) {
-                    proxy.scrollTo(request.itemID, anchor: anchor)
-                }
-            }
-            .overlay(alignment: .bottom) {
-                if let message = controller.transientMessage {
-                    Text(message)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(.primary)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 7)
-                        .background(.ultraThinMaterial, in: Capsule())
-                        .overlay(Capsule().stroke(Color.white.opacity(0.28), lineWidth: 1))
-                        .shadow(color: .black.opacity(0.16), radius: 14, y: 8)
-                        .padding(.bottom, 8)
-                        .transition(.opacity.combined(with: .move(edge: .bottom)).combined(with: .scale(scale: 0.98)))
-                }
+        )
+        .background(
+            HorizontalWheelScrollSurface(
+                selectionScrollRequest: controller.selectionScrollRequest,
+                reduceMotion: reduceMotion
+            )
+        )
+        .overlay(alignment: .bottom) {
+            if let message = controller.transientMessage {
+                Text(message)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.primary)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 7)
+                    .background(.ultraThinMaterial, in: Capsule())
+                    .overlay(Capsule().stroke(Color.white.opacity(0.28), lineWidth: 1))
+                    .shadow(color: .black.opacity(0.16), radius: 14, y: 8)
+                    .padding(.bottom, 8)
+                    .transition(.opacity.combined(with: .move(edge: .bottom)).combined(with: .scale(scale: 0.98)))
             }
         }
     }
@@ -273,7 +258,11 @@ struct OverlayView: View {
     }
 
     private func thumbnail(for item: ClipboardItem) -> NSImage? {
-        thumbnailCache.image(for: item, store: controller.store)
+        if let image = thumbnailCache.image(for: item) {
+            return image
+        }
+        thumbnailCache.load(item: item, store: controller.store)
+        return nil
     }
 
     private var queryBinding: Binding<String> {
@@ -290,45 +279,6 @@ struct OverlayView: View {
         )
     }
 
-    private func shouldScroll(to itemID: UUID, direction: OverlayScrollDirection) -> Bool {
-        guard direction != .initial,
-              timelineWidth > 0,
-              let frame = cardFrames[itemID]
-        else {
-            return true
-        }
-        let inset: CGFloat = 18
-        return frame.minX < inset || frame.maxX > timelineWidth - inset
-    }
-
-    private func scrollAnchor(for direction: OverlayScrollDirection) -> UnitPoint {
-        switch direction {
-        case .initial, .backward:
-            return .leading
-        case .forward:
-            return .trailing
-        }
-    }
-}
-
-private enum TimelineCoordinateSpace {
-    static let name = "overlay-timeline"
-}
-
-private struct CardFramePreferenceKey: PreferenceKey {
-    static var defaultValue: [UUID: CGRect] = [:]
-
-    static func reduce(value: inout [UUID: CGRect], nextValue: () -> [UUID: CGRect]) {
-        value.merge(nextValue(), uniquingKeysWith: { _, new in new })
-    }
-}
-
-private struct TimelineWidthPreferenceKey: PreferenceKey {
-    static var defaultValue: CGFloat = 0
-
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = nextValue()
-    }
 }
 
 struct AppGlyph: View {
@@ -351,32 +301,59 @@ struct AppGlyph: View {
     }
 }
 
-private final class OverlayThumbnailCache {
-    private var images: [UUID: NSImage] = [:]
+@MainActor
+private final class OverlayThumbnailCache: ObservableObject {
+    @Published private(set) var images: [UUID: NSImage] = [:]
     private var misses: Set<UUID> = []
+    private var loading: Set<UUID> = []
 
-    func image(for item: ClipboardItem, store: ClipboardStore) -> NSImage? {
-        if let cached = images[item.id] {
-            return cached
-        }
-        if misses.contains(item.id) {
-            return nil
-        }
-        guard let blob = item.blobRefs.first(where: { $0.thumbnailPath != nil }),
-              let data = try? store.thumbnailData(for: blob),
-              let image = NSImage(data: data)
+    func image(for item: ClipboardItem) -> NSImage? {
+        images[item.id]
+    }
+
+    func load(item: ClipboardItem, store: ClipboardStore) {
+        let itemID = item.id
+        guard images[itemID] == nil,
+              !misses.contains(itemID),
+              !loading.contains(itemID),
+              let blob = item.blobRefs.first(where: { $0.thumbnailPath != nil })
         else {
-            misses.insert(item.id)
-            return nil
+            if item.blobRefs.first(where: { $0.thumbnailPath != nil }) == nil {
+                misses.insert(itemID)
+            }
+            return
         }
-        images[item.id] = image
-        return image
+
+        loading.insert(itemID)
+        let read = ThumbnailRead(store: store, blob: blob)
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let image: NSImage? = autoreleasepool {
+                guard let data = try? read.store.thumbnailData(for: read.blob) else {
+                    return nil
+                }
+                return NSImage(data: data)
+            }
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.loading.remove(itemID)
+                if let image {
+                    self.images[itemID] = image
+                } else {
+                    self.misses.insert(itemID)
+                }
+            }
+        }
     }
 
     func retain(itemIds: Set<UUID>) {
         images = images.filter { itemIds.contains($0.key) }
         misses = misses.filter { itemIds.contains($0) }
     }
+}
+
+private struct ThumbnailRead: @unchecked Sendable {
+    let store: ClipboardStore
+    let blob: ClipboardBlob
 }
 
 struct ShortcutHint: View {
@@ -395,6 +372,22 @@ private enum OverlayMotion {
     static let hover = Animation.easeOut(duration: 0.08)
     static let scrollFast = Animation.easeOut(duration: 0.12)
     static let quick = Animation.smooth(duration: 0.16)
+    static let scrollDuration: TimeInterval = 0.10
+}
+
+enum OverlayTimelineLayout {
+    static let horizontalPadding: CGFloat = 14
+    static let cardWidth: CGFloat = 214
+    static let cardSpacing: CGFloat = 10
+
+    static func cardFrame(for index: Int, visibleBounds: NSRect) -> NSRect {
+        NSRect(
+            x: horizontalPadding + CGFloat(max(index, 0)) * (cardWidth + cardSpacing),
+            y: visibleBounds.minY + 14,
+            width: cardWidth,
+            height: 196
+        )
+    }
 }
 
 private struct LiquidGlassPanelBackground: View {
@@ -608,9 +601,9 @@ struct ClipCard: View, Equatable {
     let index: Int
     let item: ClipboardItem
     let isSelected: Bool
+    let isHovered: Bool
     let thumbnailProvider: (ClipboardItem) -> NSImage?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var isHovering = false
     private var typeStyle: ClipboardTypeStyle {
         ClipboardTypeStyle(type: ClipboardTypeFilter(rawValue: item.primaryType))
     }
@@ -618,7 +611,8 @@ struct ClipCard: View, Equatable {
     static func == (lhs: ClipCard, rhs: ClipCard) -> Bool {
         lhs.index == rhs.index &&
             lhs.item == rhs.item &&
-            lhs.isSelected == rhs.isSelected
+            lhs.isSelected == rhs.isSelected &&
+            lhs.isHovered == rhs.isHovered
     }
 
     var body: some View {
@@ -630,10 +624,6 @@ struct ClipCard: View, Equatable {
                         .font(.system(size: 11, weight: .bold))
                         .foregroundStyle(typeStyle.accent)
                         .textCase(.uppercase)
-                        .lineLimit(1)
-                    Text(typeSubtitle)
-                        .font(.system(size: 10.5, weight: .medium))
-                        .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
                 Spacer(minLength: 0)
@@ -666,14 +656,11 @@ struct ClipCard: View, Equatable {
         .background(cardBackground)
         .overlay(cardHighlight, alignment: .top)
         .overlay(cardBorder)
-        .scaleEffect(isSelected ? 1.01 : (isHovering ? 1.004 : 1.0))
-        .offset(y: isSelected ? -1 : 0)
-        .shadow(color: Color.black.opacity(isSelected ? 0.14 : (isHovering ? 0.09 : 0.07)), radius: isSelected ? 10 : 7, x: 0, y: isSelected ? 6 : 4)
+        .scaleEffect(isSelected ? 1.008 : (isHovered ? 1.012 : 1.0))
+        .offset(y: isSelected ? -1 : (isHovered ? -0.5 : 0))
+        .shadow(color: Color.black.opacity(isSelected ? 0.14 : (isHovered ? 0.11 : 0.07)), radius: isSelected ? 10 : (isHovered ? 9 : 7), x: 0, y: isSelected ? 6 : (isHovered ? 5 : 4))
         .animation(reduceMotion ? nil : OverlayMotion.selectionFast, value: isSelected)
-        .animation(reduceMotion ? nil : OverlayMotion.hover, value: isHovering)
-        .onHover { hovering in
-            isHovering = hovering
-        }
+        .animation(reduceMotion ? nil : OverlayMotion.hover, value: isHovered)
     }
 
     @ViewBuilder
@@ -700,27 +687,6 @@ struct ClipCard: View, Equatable {
         ClipboardTypeFilter(rawValue: item.primaryType)?.displayName ?? item.primaryType.capitalized
     }
 
-    private var typeSubtitle: String {
-        switch ClipboardTypeFilter(rawValue: item.primaryType) {
-        case .url:
-            return ClipboardPreviewMetadata.host(from: item.previewText) ?? "Web link"
-        case .file:
-            return ClipboardPreviewMetadata.fileExtension(from: item.previewText).map { "\($0.uppercased()) file" } ?? "Local file"
-        case .pdf:
-            return "Document"
-        case .image:
-            return "Visual item"
-        case .code:
-            return "Snippet"
-        case .richText:
-            return "Formatted text"
-        case .color:
-            return ClipboardPreviewMetadata.colorHex(from: item.previewText) ?? "Color value"
-        default:
-            return "\(max(item.previewText.count, 1)) chars"
-        }
-    }
-
     private var cardBackground: some View {
         RoundedRectangle(cornerRadius: 11, style: .continuous)
             .fill(.ultraThinMaterial)
@@ -729,8 +695,8 @@ struct ClipCard: View, Equatable {
                     .fill(
                         LinearGradient(
                             colors: [
-                                typeStyle.accent.opacity(isSelected ? 0.17 : (isHovering ? 0.11 : 0.075)),
-                                Color(nsColor: .controlBackgroundColor).opacity(isHovering ? 0.44 : 0.30)
+                                typeStyle.accent.opacity(isSelected ? 0.17 : (isHovered ? 0.13 : 0.075)),
+                                Color(nsColor: .controlBackgroundColor).opacity(isHovered ? 0.46 : 0.30)
                             ],
                             startPoint: .topLeading,
                             endPoint: .bottomTrailing
@@ -1266,25 +1232,53 @@ private enum ClipboardPreviewMetadata {
 private struct CardClickSurface: NSViewRepresentable {
     let onSingleClick: () -> Void
     let onDoubleClick: () -> Void
+    let onHoverChanged: (Bool) -> Void
 
     func makeNSView(context: Context) -> CardClickView {
         let view = CardClickView()
         view.onSingleClick = onSingleClick
         view.onDoubleClick = onDoubleClick
+        view.onHoverChanged = onHoverChanged
         return view
     }
 
     func updateNSView(_ nsView: CardClickView, context: Context) {
         nsView.onSingleClick = onSingleClick
         nsView.onDoubleClick = onDoubleClick
+        nsView.onHoverChanged = onHoverChanged
     }
 }
 
-private final class CardClickView: NSView {
+final class CardClickView: NSView {
     var onSingleClick: (() -> Void)?
     var onDoubleClick: (() -> Void)?
+    var onHoverChanged: ((Bool) -> Void)?
+    private var trackingArea: NSTrackingArea?
 
     override var acceptsFirstResponder: Bool { false }
+
+    override func updateTrackingAreas() {
+        if let trackingArea {
+            removeTrackingArea(trackingArea)
+        }
+        let trackingArea = NSTrackingArea(
+            rect: .zero,
+            options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(trackingArea)
+        self.trackingArea = trackingArea
+        super.updateTrackingAreas()
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        onHoverChanged?(true)
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        onHoverChanged?(false)
+    }
 
     override func mouseDown(with event: NSEvent) {
         if event.clickCount >= 2 {
@@ -1300,16 +1294,28 @@ private final class CardClickView: NSView {
 }
 
 private struct HorizontalWheelScrollSurface: NSViewRepresentable {
+    let selectionScrollRequest: OverlaySelectionScrollRequest?
+    let reduceMotion: Bool
+
     func makeNSView(context: Context) -> HorizontalWheelScrollView {
-        HorizontalWheelScrollView()
+        let view = HorizontalWheelScrollView()
+        view.updateSelectionScroll(selectionScrollRequest, reduceMotion: reduceMotion)
+        return view
     }
 
-    func updateNSView(_ nsView: HorizontalWheelScrollView, context: Context) {}
+    func updateNSView(_ nsView: HorizontalWheelScrollView, context: Context) {
+        nsView.updateSelectionScroll(selectionScrollRequest, reduceMotion: reduceMotion)
+    }
 }
 
-private final class HorizontalWheelScrollView: NSView {
+final class HorizontalWheelScrollView: NSView {
     private var eventMonitor: Any?
     private weak var cachedScrollView: NSScrollView?
+    private var handledScrollSequence: Int?
+    private var pendingScrollRequest: OverlaySelectionScrollRequest?
+    private var pendingReduceMotion = false
+    private var pendingRetryCount = 0
+    private var retryScheduled = false
 
     override var acceptsFirstResponder: Bool { false }
 
@@ -1321,6 +1327,7 @@ private final class HorizontalWheelScrollView: NSView {
         super.viewDidMoveToWindow()
         cachedScrollView = nil
         updateEventMonitor()
+        retryPendingSelectionScroll()
     }
 
     deinit {
@@ -1332,6 +1339,128 @@ private final class HorizontalWheelScrollView: NSView {
     override func scrollWheel(with event: NSEvent) {
         scrollHorizontally(with: event)
     }
+
+    func updateSelectionScroll(_ request: OverlaySelectionScrollRequest?, reduceMotion: Bool) {
+        guard let request,
+              request.sequence != handledScrollSequence
+        else {
+            return
+        }
+
+        if pendingScrollRequest?.sequence != request.sequence {
+            pendingRetryCount = 0
+        }
+        pendingScrollRequest = request
+        pendingReduceMotion = reduceMotion
+        scheduleSelectionScrollRetry()
+    }
+
+    private func applyPendingSelectionScroll(reduceMotion: Bool) {
+        guard let request = pendingScrollRequest,
+              request.sequence != handledScrollSequence
+        else {
+            return
+        }
+
+        guard let scrollView = targetScrollView(requireScrollable: false) else {
+            guard pendingRetryCount < 1 else {
+                pendingScrollRequest = nil
+                handledScrollSequence = request.sequence
+                return
+            }
+            pendingRetryCount += 1
+            scheduleSelectionScrollRetry()
+            return
+        }
+
+        if request.direction != .initial,
+           !isUsableTarget(scrollView) {
+            guard pendingRetryCount < 1 else {
+                pendingScrollRequest = nil
+                handledScrollSequence = request.sequence
+                return
+            }
+            pendingRetryCount += 1
+            scheduleSelectionScrollRetry()
+            return
+        }
+
+        pendingScrollRequest = nil
+        handledScrollSequence = request.sequence
+        revealSelection(
+            request,
+            in: scrollView,
+            animated: request.animated && !reduceMotion
+        )
+    }
+
+    private func scheduleSelectionScrollRetry() {
+        guard !retryScheduled else { return }
+        retryScheduled = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.retryScheduled = false
+            self.applyPendingSelectionScroll(reduceMotion: self.pendingReduceMotion)
+        }
+    }
+
+    private func retryPendingSelectionScroll() {
+        guard pendingScrollRequest != nil else { return }
+        scheduleSelectionScrollRetry()
+    }
+
+    private func revealSelection(
+        _ request: OverlaySelectionScrollRequest,
+        in scrollView: NSScrollView,
+        animated: Bool
+    ) {
+        let contentView = scrollView.contentView
+        let visibleBounds = contentView.bounds
+        let documentWidth = scrollView.documentView?.bounds.width ?? 0
+        let maxX = max(documentWidth - visibleBounds.width, 0)
+        let targetFrame = OverlayTimelineLayout.cardFrame(for: request.index, visibleBounds: visibleBounds)
+        let inset: CGFloat = 16
+        var targetX = visibleBounds.origin.x
+
+        if request.direction == .initial {
+            targetX = 0
+        } else if targetFrame.minX < visibleBounds.minX + inset {
+            targetX = targetFrame.minX - inset
+        } else if targetFrame.maxX > visibleBounds.maxX - inset {
+            targetX = targetFrame.maxX - visibleBounds.width + inset
+        } else {
+            return
+        }
+
+        targetX = min(max(targetX, 0), maxX)
+        guard abs(targetX - visibleBounds.origin.x) > 0.5 else { return }
+        let targetOrigin = NSPoint(x: targetX, y: visibleBounds.origin.y)
+
+        if animated {
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = OverlayMotion.scrollDuration
+                context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+                contentView.animator().setBoundsOrigin(targetOrigin)
+            } completionHandler: { [weak scrollView] in
+                guard let scrollView else { return }
+                scrollView.reflectScrolledClipView(scrollView.contentView)
+            }
+        } else {
+            contentView.layer?.removeAllAnimations()
+            contentView.setBoundsOrigin(targetOrigin)
+            scrollView.reflectScrolledClipView(contentView)
+        }
+    }
+
+    #if DEBUG
+    func revealSelectionForTesting(
+        _ request: OverlaySelectionScrollRequest,
+        in scrollView: NSScrollView,
+        animated: Bool = false
+    ) {
+        revealSelection(request, in: scrollView, animated: animated)
+    }
+    #endif
 
     private func updateEventMonitor() {
         if let eventMonitor {
@@ -1391,26 +1520,26 @@ private final class HorizontalWheelScrollView: NSView {
         return direction * magnitude
     }
 
-    private func targetScrollView() -> NSScrollView? {
+    private func targetScrollView(requireScrollable: Bool = true) -> NSScrollView? {
         if let cachedScrollView,
            cachedScrollView.window === window,
-           isUsableTarget(cachedScrollView) {
+           (!requireScrollable || isUsableTarget(cachedScrollView)) {
             return cachedScrollView
         }
 
         if let enclosingScrollView,
-           isUsableTarget(enclosingScrollView) {
+           (!requireScrollable || isUsableTarget(enclosingScrollView)) {
             cachedScrollView = enclosingScrollView
             return enclosingScrollView
         }
 
         if let nearest = nearestScrollView(),
-           isUsableTarget(nearest) {
+           (!requireScrollable || isUsableTarget(nearest)) {
             cachedScrollView = nearest
             return nearest
         }
 
-        let matched = matchingScrollViewInWindow()
+        let matched = matchingScrollViewInWindow(requireScrollable: requireScrollable)
         cachedScrollView = matched
         return matched
     }
@@ -1426,13 +1555,13 @@ private final class HorizontalWheelScrollView: NSView {
         return nil
     }
 
-    private func matchingScrollViewInWindow() -> NSScrollView? {
+    private func matchingScrollViewInWindow(requireScrollable: Bool) -> NSScrollView? {
         guard let contentView = window?.contentView else { return nil }
         let surfaceFrame = convert(bounds, to: nil)
         let scrollViews = contentView.descendants.compactMap { $0 as? NSScrollView }
         return scrollViews
             .filter { scrollView in
-                guard isUsableTarget(scrollView) else { return false }
+                guard !requireScrollable || isUsableTarget(scrollView) else { return false }
                 let frame = scrollView.convert(scrollView.bounds, to: nil)
                 return frame.intersects(surfaceFrame)
             }

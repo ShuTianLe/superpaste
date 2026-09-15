@@ -19,6 +19,14 @@ on:
         options:
           - "false"
           - "true"
+      replace_existing_release:
+        description: Replace an existing tag and release after validation
+        required: true
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
 
 jobs:
   build:
@@ -114,15 +122,17 @@ jobs:
           macOS 14+，Apple Silicon / arm64。
 
           更新内容：
-          - 修复面板唤起后必须先点击才能使用方向键的问题。
-          - 统一鼠标与键盘选择状态，悬停不再意外改变选择。
-          - 优化连续浏览时的选中反馈、滚动动画和刷新性能。
+          - 修复键盘快捷键唤起后面板因焦点竞态瞬间消失的问题。
+          - 恢复鼠标悬停反馈，并保持悬停不改变正式选择。
+          - 移除卡片类型标题下方的英文副标题，界面信息更清晰。
+          - 优化连续浏览时的选中反馈、滚动动画和数据刷新性能。
 
           macOS 14+, Apple Silicon / arm64.
 
           Changes:
-          - Fixed arrow-key navigation requiring a click after opening the panel.
-          - Unified mouse and keyboard selection state so hovering no longer changes the selection.
+          - Fixed the focus race that could make the panel disappear immediately after a keyboard shortcut.
+          - Restored mouse hover feedback while keeping hover separate from the committed selection.
+          - Removed English subtitles below card type labels for a clearer interface.
           - Improved selection feedback, scrolling, and refresh performance during rapid browsing.
 
           SHA-256:
@@ -132,8 +142,35 @@ jobs:
           \`\`\`
           EOF
           sed -i '' 's/^          //' /tmp/release-notes.md
-          gh release create "$TAG" "dist/${ASSET}" "dist/${ASSET}.sha256" \
-            --repo "${{ github.repository }}" \
-            --target "${{ github.sha }}" \
-            --title "Superpaste ${VERSION} - macOS arm64" \
-            --notes-file /tmp/release-notes.md
+          if [[ "${{ inputs.replace_existing_release }}" == "true" ]]; then
+            if gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+              gh release upload "$TAG" \
+                "dist/${ASSET}" "dist/${ASSET}.sha256" \
+                --repo "${{ github.repository }}" \
+                --clobber
+              gh release edit "$TAG" \
+                --repo "${{ github.repository }}" \
+                --title "Superpaste ${VERSION} - macOS arm64" \
+                --notes-file /tmp/release-notes.md \
+                --target "${{ github.sha }}"
+            else
+              gh release create "$TAG" \
+                "dist/${ASSET}" "dist/${ASSET}.sha256" \
+                --repo "${{ github.repository }}" \
+                --target "${{ github.sha }}" \
+                --title "Superpaste ${VERSION} - macOS arm64" \
+                --notes-file /tmp/release-notes.md
+            fi
+            git tag -f "$TAG" "${{ github.sha }}"
+            git push origin "refs/tags/$TAG" --force
+            gh release edit "$TAG" \
+              --repo "${{ github.repository }}" \
+              --target "${{ github.sha }}"
+          else
+            gh release create "$TAG" \
+              "dist/${ASSET}" "dist/${ASSET}.sha256" \
+              --repo "${{ github.repository }}" \
+              --target "${{ github.sha }}" \
+              --title "Superpaste ${VERSION} - macOS arm64" \
+              --notes-file /tmp/release-notes.md
+          fi

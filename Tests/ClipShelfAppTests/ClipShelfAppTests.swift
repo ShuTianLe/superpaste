@@ -128,12 +128,103 @@ final class ClipShelfAppTests: XCTestCase {
         defer { presenter.hide() }
 
         XCTAssertTrue(presenter.presentedPanel.isVisible)
+        XCTAssertTrue(presenter.presentedPanel.isKeyWindow)
         XCTAssertTrue(presenter.presentedPanel.canBecomeKey)
+        XCTAssertFalse(presenter.presentedPanel.canBecomeMain)
         XCTAssertFalse(presenter.presentedPanel.becomesKeyOnlyIfNeeded)
         XCTAssertTrue(presenter.presentedPanel.firstResponder === presenter.presentedKeyboardResponder)
 
         presenter.presentedPanel.sendEvent(keyEvent(keyCode: 124))
         XCTAssertEqual(controller.selectedIndex, 1)
+    }
+
+    func testPanelIgnoresTransientResignKeyDuringPresentationButDismissesAfterward() throws {
+        let controller = try makeController(items: ["one", "two"])
+        let presenter = OverlayPanelController(controller: controller)
+        let resignNotification = Notification(name: NSWindow.didResignKeyNotification, object: presenter.presentedPanel)
+
+        presenter.show()
+        presenter.windowDidResignKey(resignNotification)
+        XCTAssertTrue(presenter.presentedPanel.isVisible)
+
+        let settleDeadline = Date(timeIntervalSinceNow: 2)
+        while !presenter.isPresentationStable && Date() < settleDeadline {
+            RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.02))
+        }
+        XCTAssertTrue(presenter.isPresentationStable)
+        XCTAssertTrue(presenter.presentedPanel.isVisible)
+
+        presenter.windowDidResignKey(resignNotification)
+        XCTAssertFalse(presenter.presentedPanel.isVisible)
+    }
+
+    func testHoverTrackingIsRestoredWithoutChangingSelection() throws {
+        let controller = try makeController(items: ["one", "two"])
+        controller.selectItem(at: 0)
+
+        let view = CardClickView(frame: NSRect(x: 0, y: 0, width: 214, height: 196))
+        var hoverEvents: [Bool] = []
+        view.onHoverChanged = { hoverEvents.append($0) }
+        view.updateTrackingAreas()
+
+        XCTAssertEqual(view.trackingAreas.count, 1)
+        XCTAssertTrue(view.trackingAreas[0].options.contains(.mouseEnteredAndExited))
+        XCTAssertTrue(view.trackingAreas[0].options.contains(.activeInKeyWindow))
+
+        view.onHoverChanged?(true)
+        view.onHoverChanged?(false)
+        XCTAssertEqual(hoverEvents, [true, false])
+        XCTAssertEqual(controller.selectedIndex, 0)
+
+        let item = controller.items[0]
+        let plainCard = ClipCard(index: 0, item: item, isSelected: true, isHovered: false, thumbnailProvider: { _ in nil })
+        let hoveredCard = ClipCard(index: 0, item: item, isSelected: true, isHovered: true, thumbnailProvider: { _ in nil })
+        XCTAssertNotEqual(plainCard, hoveredCard)
+    }
+
+    func testSelectionScrollOnlyMovesWhenCardLeavesVisibleBounds() {
+        let scrollView = NSScrollView(frame: NSRect(x: 0, y: 0, width: 300, height: 220))
+        scrollView.hasHorizontalScroller = false
+        scrollView.hasVerticalScroller = false
+        scrollView.documentView = NSView(frame: NSRect(x: 0, y: 0, width: 1_400, height: 196))
+        let view = HorizontalWheelScrollView()
+        let itemID = UUID()
+
+        let visibleRequest = OverlaySelectionScrollRequest(
+            itemID: itemID,
+            index: 0,
+            direction: .forward,
+            animated: false,
+            sequence: 1
+        )
+        view.revealSelectionForTesting(visibleRequest, in: scrollView)
+        XCTAssertEqual(scrollView.contentView.bounds.origin.x, 0, accuracy: 0.5)
+
+        let offscreenRequest = OverlaySelectionScrollRequest(
+            itemID: itemID,
+            index: 3,
+            direction: .forward,
+            animated: false,
+            sequence: 2
+        )
+        view.revealSelectionForTesting(offscreenRequest, in: scrollView)
+        let offsetAfterForward = scrollView.contentView.bounds.origin.x
+        XCTAssertGreaterThan(offsetAfterForward, 0)
+
+        let visibleBounds = scrollView.contentView.bounds
+        let targetFrame = OverlayTimelineLayout.cardFrame(for: 3, visibleBounds: visibleBounds)
+        XCTAssertGreaterThanOrEqual(targetFrame.minX, visibleBounds.minX + 15.5)
+        XCTAssertLessThanOrEqual(targetFrame.maxX, visibleBounds.maxX - 15.5)
+
+        let backwardRequest = OverlaySelectionScrollRequest(
+            itemID: itemID,
+            index: 0,
+            direction: .backward,
+            animated: false,
+            sequence: 3
+        )
+        view.revealSelectionForTesting(backwardRequest, in: scrollView)
+        XCTAssertEqual(scrollView.contentView.bounds.origin.x, 0, accuracy: 0.5)
     }
 
     private func makeController(items previews: [String]) throws -> ClipShelfController {

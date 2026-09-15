@@ -29,6 +29,7 @@ enum OverlayScrollDirection: Equatable {
 
 struct OverlaySelectionScrollRequest: Equatable {
     let itemID: UUID
+    let index: Int
     let direction: OverlayScrollDirection
     let animated: Bool
     let sequence: Int
@@ -159,6 +160,7 @@ final class ClipShelfController: ObservableObject {
         selectionScrollSequence += 1
         selectionScrollRequest = OverlaySelectionScrollRequest(
             itemID: items[selectedIndex].id,
+            index: selectedIndex,
             direction: direction,
             animated: animated,
             sequence: selectionScrollSequence

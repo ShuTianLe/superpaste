@@ -6,7 +6,13 @@ final class OverlayPanelController: NSObject, OverlayPresenting, NSWindowDelegat
     private let controller: ClipShelfController
     private lazy var panel: NSPanel = makePanel()
     private weak var keyboardResponder: NSView?
-    private var previouslyActiveApplication: NSRunningApplication?
+    private enum PresentationState: Equatable {
+        case hidden
+        case presenting(Int)
+        case visible
+    }
+    private var presentationState: PresentationState = .hidden
+    private var presentationGeneration = 0
 
     init(controller: ClipShelfController) {
         self.controller = controller
@@ -14,34 +20,42 @@ final class OverlayPanelController: NSObject, OverlayPresenting, NSWindowDelegat
     }
 
     func show() {
-        let frontmostApplication = NSWorkspace.shared.frontmostApplication
-        if frontmostApplication?.bundleIdentifier != Bundle.main.bundleIdentifier {
-            previouslyActiveApplication = frontmostApplication
-        }
+        presentationGeneration += 1
+        let generation = presentationGeneration
+        presentationState = .presenting(generation)
         positionPanel()
         panel.orderFrontRegardless()
-        NSApp.activate()
         panel.makeKey()
         focusPanel()
 
-        Task { @MainActor [weak self] in
-            await Task.yield()
-            guard let self, panel.isVisible else { return }
-            if !panel.isKeyWindow {
-                panel.makeKey()
+        DispatchQueue.main.async { @MainActor [weak self] in
+            guard let self,
+                  self.presentationGeneration == generation,
+                  self.panel.isVisible
+            else {
+                return
             }
-            focusPanel()
+            if !self.panel.isKeyWindow {
+                self.panel.makeKey()
+            }
+            self.focusPanel()
+            self.presentationState = .visible
         }
     }
 
     func hide() {
-        panel.orderOut(nil)
-        restorePreviousApplication()
+        guard presentationState != .hidden else {
+            return
+        }
+        presentationGeneration += 1
+        presentationState = .hidden
+        if panel.isVisible {
+            panel.orderOut(nil)
+        }
     }
 
     func hideForPaste(completion: @escaping () -> Void) {
-        previouslyActiveApplication = nil
-        panel.orderOut(nil)
+        hide()
         Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(100))
             completion()
@@ -92,12 +106,6 @@ final class OverlayPanelController: NSObject, OverlayPresenting, NSWindowDelegat
         panel.makeFirstResponder(keyboardResponder)
     }
 
-    private func restorePreviousApplication() {
-        let application = previouslyActiveApplication
-        previouslyActiveApplication = nil
-        application?.activate()
-    }
-
     private func positionPanel() {
         guard let screen = NSScreen.main ?? NSScreen.screens.first else {
             return
@@ -115,12 +123,21 @@ final class OverlayPanelController: NSObject, OverlayPresenting, NSWindowDelegat
     }
 
     func windowDidResignKey(_ notification: Notification) {
-        hide()
+        switch presentationState {
+        case .hidden, .presenting:
+            // A nonactivating panel can briefly report resign-key while AppKit
+            // completes the key-window handoff. It must not dismiss itself
+            // during that presentation window.
+            return
+        case .visible:
+            hide()
+        }
     }
 
     #if DEBUG
     var presentedPanel: NSPanel { panel }
     var presentedKeyboardResponder: NSView? { keyboardResponder }
+    var isPresentationStable: Bool { presentationState == .visible }
     #endif
 }
 
@@ -128,7 +145,7 @@ final class KeyboardPanel: NSPanel {
     var keyHandler: ((NSEvent) -> Bool)?
 
     override var canBecomeKey: Bool { true }
-    override var canBecomeMain: Bool { true }
+    override var canBecomeMain: Bool { false }
 
     override func sendEvent(_ event: NSEvent) {
         if event.type == .keyDown, keyHandler?(event) == true {
