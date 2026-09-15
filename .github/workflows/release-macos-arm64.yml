@@ -132,7 +132,7 @@ jobs:
           \`\`\`
           EOF
           sed -i '' 's/^          //' /tmp/release-notes.md
-          gh release create "$TAG" "dist/${ASSET}" \
+          gh release create "$TAG" "dist/${ASSET}" "dist/${ASSET}.sha256" \
             --repo "${{ github.repository }}" \
             --target "${{ github.sha }}" \
             --title "Superpaste ${VERSION} - macOS arm64" \
