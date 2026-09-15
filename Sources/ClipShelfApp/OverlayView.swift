@@ -4,9 +4,11 @@ import SwiftUI
 
 struct OverlayView: View {
     @ObservedObject var controller: ClipShelfController
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @FocusState private var searchFocused: Bool
-    @State private var visualSelectedIndex = 0
     @State private var thumbnailCache = OverlayThumbnailCache()
+    @State private var cardFrames: [UUID: CGRect] = [:]
+    @State private var timelineWidth: CGFloat = 0
 
     var body: some View {
         VStack(spacing: 0) {
@@ -21,10 +23,7 @@ struct OverlayView: View {
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .onAppear {
             searchFocused = false
-            visualSelectedIndex = controller.selectedIndex
-            controller.setVisualSelectedIndex(controller.selectedIndex)
             controller.accessibilityTrusted = AccessibilityPermission.isTrusted
-            controller.reload()
         }
         .onChange(of: controller.overlayFocusResetRequest) { _, _ in
             searchFocused = false
@@ -36,22 +35,10 @@ struct OverlayView: View {
             }
             searchFocused = true
         }
-        .onChange(of: controller.query) { _, _ in
-            controller.reload(resetSelection: true, scrollToSelection: true)
-        }
-        .onChange(of: controller.typeFilter) { _, _ in
-            controller.reload(resetSelection: true, scrollToSelection: true)
-        }
         .onChange(of: controller.items) { _, items in
-            visualSelectedIndex = min(controller.selectedIndex, max(items.count - 1, 0))
-            controller.setVisualSelectedIndex(visualSelectedIndex)
             let itemIds = Set(items.map(\.id))
             thumbnailCache.retain(itemIds: itemIds)
-        }
-        .onChange(of: controller.selectedIndex) { _, index in
-            guard controller.items.indices.contains(index) else { return }
-            visualSelectedIndex = index
-            controller.setVisualSelectedIndex(index)
+            cardFrames = cardFrames.filter { itemIds.contains($0.key) }
         }
         .onExitCommand {
             controller.hideOverlay()
@@ -70,12 +57,11 @@ struct OverlayView: View {
             HStack(spacing: 8) {
                 Image(systemName: "magnifyingglass")
                     .foregroundStyle(.secondary)
-                TextField(L10n.text("overlay.search"), text: $controller.query)
+                TextField(L10n.text("overlay.search"), text: queryBinding)
                     .textFieldStyle(.plain)
                     .font(.system(size: 16, weight: .medium))
                     .focused($searchFocused)
                     .onSubmit {
-                        controller.syncSelectionToVisualSelection()
                         controller.pasteSelected()
                     }
             }
@@ -83,9 +69,9 @@ struct OverlayView: View {
             .frame(height: 40)
             .background(Color(nsColor: .textBackgroundColor).opacity(0.62), in: RoundedRectangle(cornerRadius: 10))
             .background(GlassSearchFieldBackground(isFocused: searchFocused))
-            .animation(OverlayMotion.quick, value: searchFocused)
+            .animation(reduceMotion ? nil : OverlayMotion.quick, value: searchFocused)
 
-            Picker("", selection: $controller.typeFilter) {
+            Picker("", selection: typeFilterBinding) {
                 ForEach(ClipboardTypeFilter.allCases) { filter in
                     Text(filter.displayName).tag(filter)
                 }
@@ -169,27 +155,26 @@ struct OverlayView: View {
                             ClipCard(
                                 index: index,
                                 item: item,
-                                isSelected: visualSelectedIndex == index,
+                                isSelected: controller.selectedIndex == index,
                                 thumbnailProvider: thumbnail(for:)
                             )
                             .equatable()
                             .id(item.id)
+                            .background {
+                                GeometryReader { geometry in
+                                    Color.clear.preference(
+                                        key: CardFramePreferenceKey.self,
+                                        value: [item.id: geometry.frame(in: .named(TimelineCoordinateSpace.name))]
+                                    )
+                                }
+                            }
                             .contentShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
                             .overlay {
                                 CardClickSurface(
-                                    onHover: {
-                                        guard visualSelectedIndex != index else { return }
-                                        visualSelectedIndex = index
-                                        controller.setVisualSelectedIndex(index)
-                                    },
                                     onSingleClick: {
-                                        withAnimation(OverlayMotion.selectionFast) {
-                                            visualSelectedIndex = index
-                                            controller.selectItem(at: index)
-                                        }
+                                        controller.selectItem(at: index)
                                     },
                                     onDoubleClick: {
-                                        visualSelectedIndex = index
                                         controller.selectItem(at: index)
                                         controller.paste(item)
                                     }
@@ -211,6 +196,12 @@ struct OverlayView: View {
                 .padding(.horizontal, 14)
                 .padding(.vertical, 14)
             }
+            .coordinateSpace(name: TimelineCoordinateSpace.name)
+            .background {
+                GeometryReader { geometry in
+                    Color.clear.preference(key: TimelineWidthPreferenceKey.self, value: geometry.size.width)
+                }
+            }
             .mask(
                 LinearGradient(
                     stops: [
@@ -224,11 +215,18 @@ struct OverlayView: View {
                 )
             )
             .background(HorizontalWheelScrollSurface())
-            .onChange(of: controller.selectionScrollRequest) { _, _ in
-                let index = controller.selectedIndex
-                guard controller.items.indices.contains(index) else { return }
-                withAnimation(OverlayMotion.scroll) {
-                    proxy.scrollTo(controller.items[index].id, anchor: .center)
+            .onPreferenceChange(CardFramePreferenceKey.self) { cardFrames = $0 }
+            .onPreferenceChange(TimelineWidthPreferenceKey.self) { timelineWidth = $0 }
+            .onChange(of: controller.selectionScrollRequest) { _, request in
+                guard let request,
+                      shouldScroll(to: request.itemID, direction: request.direction)
+                else {
+                    return
+                }
+                let anchor = scrollAnchor(for: request.direction)
+                let animation = request.animated && !reduceMotion ? OverlayMotion.scrollFast : nil
+                withAnimation(animation) {
+                    proxy.scrollTo(request.itemID, anchor: anchor)
                 }
             }
             .overlay(alignment: .bottom) {
@@ -276,6 +274,60 @@ struct OverlayView: View {
 
     private func thumbnail(for item: ClipboardItem) -> NSImage? {
         thumbnailCache.image(for: item, store: controller.store)
+    }
+
+    private var queryBinding: Binding<String> {
+        Binding(
+            get: { controller.query },
+            set: { controller.updateQuery($0) }
+        )
+    }
+
+    private var typeFilterBinding: Binding<ClipboardTypeFilter> {
+        Binding(
+            get: { controller.typeFilter },
+            set: { controller.updateTypeFilter($0) }
+        )
+    }
+
+    private func shouldScroll(to itemID: UUID, direction: OverlayScrollDirection) -> Bool {
+        guard direction != .initial,
+              timelineWidth > 0,
+              let frame = cardFrames[itemID]
+        else {
+            return true
+        }
+        let inset: CGFloat = 18
+        return frame.minX < inset || frame.maxX > timelineWidth - inset
+    }
+
+    private func scrollAnchor(for direction: OverlayScrollDirection) -> UnitPoint {
+        switch direction {
+        case .initial, .backward:
+            return .leading
+        case .forward:
+            return .trailing
+        }
+    }
+}
+
+private enum TimelineCoordinateSpace {
+    static let name = "overlay-timeline"
+}
+
+private struct CardFramePreferenceKey: PreferenceKey {
+    static var defaultValue: [UUID: CGRect] = [:]
+
+    static func reduce(value: inout [UUID: CGRect], nextValue: () -> [UUID: CGRect]) {
+        value.merge(nextValue(), uniquingKeysWith: { _, new in new })
+    }
+}
+
+private struct TimelineWidthPreferenceKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
     }
 }
 
@@ -339,10 +391,9 @@ struct ShortcutHint: View {
 }
 
 private enum OverlayMotion {
-    static let selection = Animation.spring(response: 0.28, dampingFraction: 0.78, blendDuration: 0.08)
     static let selectionFast = Animation.easeOut(duration: 0.10)
     static let hover = Animation.easeOut(duration: 0.08)
-    static let scroll = Animation.smooth(duration: 0.24)
+    static let scrollFast = Animation.easeOut(duration: 0.12)
     static let quick = Animation.smooth(duration: 0.16)
 }
 
@@ -514,6 +565,7 @@ struct PinboardButton: View {
     let color: Color
     let isSelected: Bool
     let action: () -> Void
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         Button(action: action) {
@@ -548,7 +600,7 @@ struct PinboardButton: View {
             .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         }
         .buttonStyle(.plain)
-        .animation(OverlayMotion.quick, value: isSelected)
+        .animation(reduceMotion ? nil : OverlayMotion.quick, value: isSelected)
     }
 }
 
@@ -557,6 +609,7 @@ struct ClipCard: View, Equatable {
     let item: ClipboardItem
     let isSelected: Bool
     let thumbnailProvider: (ClipboardItem) -> NSImage?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isHovering = false
     private var typeStyle: ClipboardTypeStyle {
         ClipboardTypeStyle(type: ClipboardTypeFilter(rawValue: item.primaryType))
@@ -613,12 +666,11 @@ struct ClipCard: View, Equatable {
         .background(cardBackground)
         .overlay(cardHighlight, alignment: .top)
         .overlay(cardBorder)
-        .scaleEffect(isSelected ? 1.018 : (isHovering ? 1.006 : 1.0))
-        .offset(y: isSelected ? -2 : (isHovering ? -1 : 0))
-        .shadow(color: Color.black.opacity(isSelected ? 0.16 : (isHovering ? 0.10 : 0.07)), radius: isSelected ? 12 : 8, x: 0, y: isSelected ? 7 : 4)
-        .shadow(color: typeStyle.accent.opacity(isSelected ? 0.10 : 0), radius: 8, x: 0, y: 4)
-        .animation(OverlayMotion.hover, value: isSelected)
-        .animation(OverlayMotion.hover, value: isHovering)
+        .scaleEffect(isSelected ? 1.01 : (isHovering ? 1.004 : 1.0))
+        .offset(y: isSelected ? -1 : 0)
+        .shadow(color: Color.black.opacity(isSelected ? 0.14 : (isHovering ? 0.09 : 0.07)), radius: isSelected ? 10 : 7, x: 0, y: isSelected ? 6 : 4)
+        .animation(reduceMotion ? nil : OverlayMotion.selectionFast, value: isSelected)
+        .animation(reduceMotion ? nil : OverlayMotion.hover, value: isHovering)
         .onHover { hovering in
             isHovering = hovering
         }
@@ -1212,65 +1264,27 @@ private enum ClipboardPreviewMetadata {
 }
 
 private struct CardClickSurface: NSViewRepresentable {
-    let onHover: () -> Void
     let onSingleClick: () -> Void
     let onDoubleClick: () -> Void
 
     func makeNSView(context: Context) -> CardClickView {
         let view = CardClickView()
-        view.onHover = onHover
         view.onSingleClick = onSingleClick
         view.onDoubleClick = onDoubleClick
         return view
     }
 
     func updateNSView(_ nsView: CardClickView, context: Context) {
-        nsView.onHover = onHover
         nsView.onSingleClick = onSingleClick
         nsView.onDoubleClick = onDoubleClick
     }
 }
 
 private final class CardClickView: NSView {
-    var onHover: (() -> Void)?
     var onSingleClick: (() -> Void)?
     var onDoubleClick: (() -> Void)?
 
-    private var trackingAreaRef: NSTrackingArea?
-    private var isMouseInside = false
-
     override var acceptsFirstResponder: Bool { false }
-
-    override func updateTrackingAreas() {
-        super.updateTrackingAreas()
-        if let trackingAreaRef {
-            removeTrackingArea(trackingAreaRef)
-        }
-        let area = NSTrackingArea(
-            rect: bounds,
-            options: [.activeAlways, .mouseEnteredAndExited, .mouseMoved, .inVisibleRect],
-            owner: self,
-            userInfo: nil
-        )
-        addTrackingArea(area)
-        trackingAreaRef = area
-    }
-
-    override func mouseEntered(with event: NSEvent) {
-        guard !isMouseInside else { return }
-        isMouseInside = true
-        onHover?()
-    }
-
-    override func mouseMoved(with event: NSEvent) {
-        guard !isMouseInside else { return }
-        isMouseInside = true
-        onHover?()
-    }
-
-    override func mouseExited(with event: NSEvent) {
-        isMouseInside = false
-    }
 
     override func mouseDown(with event: NSEvent) {
         if event.clickCount >= 2 {

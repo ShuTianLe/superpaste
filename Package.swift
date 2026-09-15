@@ -35,6 +35,10 @@ let package = Package(
         .executableTarget(
             name: "ClipShelfCoreSmokeTests",
             dependencies: ["ClipShelfCore"]
+        ),
+        .testTarget(
+            name: "ClipShelfAppTests",
+            dependencies: ["ClipShelfApp", "ClipShelfCore"]
         )
     ],
     swiftLanguageVersions: [.v5]

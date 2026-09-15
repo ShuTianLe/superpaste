@@ -6,11 +6,11 @@ on:
       version:
         description: Version without leading v
         required: true
-        default: 1.0.8
+        default: 1.0.10
       build:
         description: CFBundleVersion
         required: true
-        default: "9"
+        default: "11"
       publish_release:
         description: Create GitHub Release
         required: true
@@ -73,6 +73,7 @@ jobs:
         run: |
           set -euo pipefail
           swift build
+          swift test
           swift build -c release --arch arm64
           swift run ClipShelfCoreSmokeTests
           Scripts/security_check.sh
@@ -113,14 +114,16 @@ jobs:
           macOS 14+，Apple Silicon / arm64。
 
           更新内容：
-          - 增加原生浅色/深色应用图标。
-          - 深色模式下图标显示更协调。
+          - 修复面板唤起后必须先点击才能使用方向键的问题。
+          - 统一鼠标与键盘选择状态，悬停不再意外改变选择。
+          - 优化连续浏览时的选中反馈、滚动动画和刷新性能。
 
           macOS 14+, Apple Silicon / arm64.
 
           Changes:
-          - Added native light and dark app icons.
-          - Improved icon appearance in Dark Mode.
+          - Fixed arrow-key navigation requiring a click after opening the panel.
+          - Unified mouse and keyboard selection state so hovering no longer changes the selection.
+          - Improved selection feedback, scrolling, and refresh performance during rapid browsing.
 
           SHA-256:
 

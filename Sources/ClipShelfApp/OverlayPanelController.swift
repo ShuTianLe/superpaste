@@ -5,6 +5,8 @@ import SwiftUI
 final class OverlayPanelController: NSObject, OverlayPresenting, NSWindowDelegate {
     private let controller: ClipShelfController
     private lazy var panel: NSPanel = makePanel()
+    private weak var keyboardResponder: NSView?
+    private var previouslyActiveApplication: NSRunningApplication?
 
     init(controller: ClipShelfController) {
         self.controller = controller
@@ -12,17 +14,33 @@ final class OverlayPanelController: NSObject, OverlayPresenting, NSWindowDelegat
     }
 
     func show() {
+        let frontmostApplication = NSWorkspace.shared.frontmostApplication
+        if frontmostApplication?.bundleIdentifier != Bundle.main.bundleIdentifier {
+            previouslyActiveApplication = frontmostApplication
+        }
         positionPanel()
-        panel.makeKeyAndOrderFront(nil)
         panel.orderFrontRegardless()
-        panel.makeFirstResponder(panel.contentView)
+        NSApp.activate()
+        panel.makeKey()
+        focusPanel()
+
+        Task { @MainActor [weak self] in
+            await Task.yield()
+            guard let self, panel.isVisible else { return }
+            if !panel.isKeyWindow {
+                panel.makeKey()
+            }
+            focusPanel()
+        }
     }
 
     func hide() {
         panel.orderOut(nil)
+        restorePreviousApplication()
     }
 
     func hideForPaste(completion: @escaping () -> Void) {
+        previouslyActiveApplication = nil
         panel.orderOut(nil)
         Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(100))
@@ -39,6 +57,7 @@ final class OverlayPanelController: NSObject, OverlayPresenting, NSWindowDelegat
             defer: false
         )
         panel.isFloatingPanel = true
+        panel.becomesKeyOnlyIfNeeded = false
         panel.hidesOnDeactivate = false
         panel.level = .floating
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
@@ -55,11 +74,28 @@ final class OverlayPanelController: NSObject, OverlayPresenting, NSWindowDelegat
             ) ?? false
         }
         panel.delegate = self
-        let hostingView = NSHostingView(rootView: OverlayView(controller: controller))
+        let hostingView = KeyboardHostingView(rootView: OverlayView(controller: controller))
         hostingView.wantsLayer = true
         hostingView.layer?.backgroundColor = NSColor.clear.cgColor
+        keyboardResponder = hostingView
+        panel.initialFirstResponder = hostingView
         panel.contentView = hostingView
         return panel
+    }
+
+    private func focusPanel() {
+        guard let keyboardResponder,
+              panel.firstResponder !== keyboardResponder
+        else {
+            return
+        }
+        panel.makeFirstResponder(keyboardResponder)
+    }
+
+    private func restorePreviousApplication() {
+        let application = previouslyActiveApplication
+        previouslyActiveApplication = nil
+        application?.activate()
     }
 
     private func positionPanel() {
@@ -74,12 +110,18 @@ final class OverlayPanelController: NSObject, OverlayPresenting, NSWindowDelegat
             width: visible.width,
             height: height
         )
+        guard panel.frame != frame else { return }
         panel.setFrame(frame, display: true)
     }
 
     func windowDidResignKey(_ notification: Notification) {
         hide()
     }
+
+    #if DEBUG
+    var presentedPanel: NSPanel { panel }
+    var presentedKeyboardResponder: NSView? { keyboardResponder }
+    #endif
 }
 
 final class KeyboardPanel: NSPanel {
@@ -95,10 +137,9 @@ final class KeyboardPanel: NSPanel {
         super.sendEvent(event)
     }
 
-    override func keyDown(with event: NSEvent) {
-        if keyHandler?(event) == true {
-            return
-        }
-        super.keyDown(with: event)
-    }
+}
+
+private final class KeyboardHostingView<Content: View>: NSHostingView<Content> {
+    override var acceptsFirstResponder: Bool { true }
+    override var needsPanelToBecomeKey: Bool { true }
 }
