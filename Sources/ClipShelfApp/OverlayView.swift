@@ -38,7 +38,7 @@ struct OverlayView: View {
         }
         .onChange(of: controller.items) { _, items in
             let itemIds = Set(items.map(\.id))
-            thumbnailCache.retain(itemIds: itemIds)
+            thumbnailCache.retain(items: items)
             if let hoveredItemID, !itemIds.contains(hoveredItemID) {
                 self.hoveredItemID = nil
             }
@@ -159,9 +159,13 @@ struct OverlayView: View {
                             item: item,
                             isSelected: controller.selectedIndex == index,
                             isHovered: hoveredItemID == item.id,
-                            thumbnailProvider: thumbnail(for:)
+                            thumbnailState: thumbnailCache.state(for: item)
                         )
                         .equatable()
+                        .task(id: ThumbnailTaskID(item: item, presentation: controller.overlayFocusResetRequest)) {
+                            thumbnailCache.load(item: item, store: controller.store,
+                                                presentation: controller.overlayFocusResetRequest)
+                        }
                         .contentShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
                         .overlay {
                             CardClickSurface(
@@ -257,14 +261,6 @@ struct OverlayView: View {
         }
     }
 
-    private func thumbnail(for item: ClipboardItem) -> NSImage? {
-        if let image = thumbnailCache.image(for: item) {
-            return image
-        }
-        thumbnailCache.load(item: item, store: controller.store)
-        return nil
-    }
-
     private var queryBinding: Binding<String> {
         Binding(
             get: { controller.query },
@@ -301,53 +297,85 @@ struct AppGlyph: View {
     }
 }
 
-@MainActor
-private final class OverlayThumbnailCache: ObservableObject {
-    @Published private(set) var images: [UUID: NSImage] = [:]
-    private var misses: Set<UUID> = []
-    private var loading: Set<UUID> = []
+enum ThumbnailState: Equatable {
+    case loading
+    case loaded(NSImage)
+    case unavailable
 
-    func image(for item: ClipboardItem) -> NSImage? {
-        images[item.id]
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        switch (lhs, rhs) {
+        case (.loading, .loading), (.unavailable, .unavailable): return true
+        case let (.loaded(a), .loaded(b)): return a === b
+        default: return false
+        }
+    }
+}
+
+struct ThumbnailTaskID: Equatable {
+    let item: ClipboardItem
+    let presentation: Int
+}
+
+@MainActor
+final class OverlayThumbnailCache: ObservableObject {
+    typealias Loader = (ClipboardStore, ClipboardBlob, @escaping (NSImage?) -> Void) -> Void
+    private struct Entry {
+        let blob: ClipboardBlob?
+        let token: UUID
+        let presentation: Int
+        var state: ThumbnailState
+    }
+    @Published private var entries: [UUID: Entry] = [:]
+    private let loader: Loader
+
+    init(loader: @escaping Loader = OverlayThumbnailCache.read) {
+        self.loader = loader
     }
 
-    func load(item: ClipboardItem, store: ClipboardStore) {
-        let itemID = item.id
-        guard images[itemID] == nil,
-              !misses.contains(itemID),
-              !loading.contains(itemID),
-              let blob = item.blobRefs.first(where: { $0.thumbnailPath != nil })
-        else {
-            if item.blobRefs.first(where: { $0.thumbnailPath != nil }) == nil {
-                misses.insert(itemID)
-            }
-            return
+    func state(for item: ClipboardItem) -> ThumbnailState {
+        let blob = item.blobRefs.first { $0.thumbnailPath != nil }
+        guard let entry = entries[item.id], entry.blob == blob else {
+            return blob == nil ? .unavailable : .loading
         }
+        return entry.state
+    }
 
-        loading.insert(itemID)
+    func load(item: ClipboardItem, store: ClipboardStore, presentation: Int) {
+        let blob = item.blobRefs.first { $0.thumbnailPath != nil }
+        if let entry = entries[item.id], entry.blob == blob {
+            if entry.state != .unavailable || entry.presentation == presentation { return }
+        }
+        let token = UUID()
+        entries[item.id] = Entry(blob: blob, token: token, presentation: presentation,
+                                 state: blob == nil ? .unavailable : .loading)
+        guard let blob else { return }
+        loader(store, blob) { [weak self] image in
+            // Always deliver asynchronously, including injected synchronous loaders.
+            DispatchQueue.main.async {
+                guard let self, self.entries[item.id]?.token == token else { return }
+                self.entries[item.id]?.state = image.map(ThumbnailState.loaded) ?? .unavailable
+            }
+        }
+    }
+
+    func retain(items: [ClipboardItem]) {
+        let blobs = Dictionary(uniqueKeysWithValues: items.map { ($0.id, $0.blobRefs) })
+        entries = entries.filter { id, entry in
+            guard let refs = blobs[id] else { return false }
+            return entry.blob == refs.first { $0.thumbnailPath != nil }
+        }
+    }
+
+    nonisolated private static func read(store: ClipboardStore, blob: ClipboardBlob,
+                                         completion: @escaping (NSImage?) -> Void) {
         let read = ThumbnailRead(store: store, blob: blob)
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+        DispatchQueue.global(qos: .userInitiated).async {
             let image: NSImage? = autoreleasepool {
-                guard let data = try? read.store.thumbnailData(for: read.blob) else {
-                    return nil
-                }
+                guard let data = try? read.store.thumbnailData(for: read.blob) else { return nil }
                 return NSImage(data: data)
             }
-            DispatchQueue.main.async {
-                guard let self else { return }
-                self.loading.remove(itemID)
-                if let image {
-                    self.images[itemID] = image
-                } else {
-                    self.misses.insert(itemID)
-                }
-            }
+            completion(image)
         }
-    }
-
-    func retain(itemIds: Set<UUID>) {
-        images = images.filter { itemIds.contains($0.key) }
-        misses = misses.filter { itemIds.contains($0) }
     }
 }
 
@@ -602,7 +630,7 @@ struct ClipCard: View, Equatable {
     let item: ClipboardItem
     let isSelected: Bool
     let isHovered: Bool
-    let thumbnailProvider: (ClipboardItem) -> NSImage?
+    let thumbnailState: ThumbnailState
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     private var typeStyle: ClipboardTypeStyle {
         ClipboardTypeStyle(type: ClipboardTypeFilter(rawValue: item.primaryType))
@@ -612,7 +640,8 @@ struct ClipCard: View, Equatable {
         lhs.index == rhs.index &&
             lhs.item == rhs.item &&
             lhs.isSelected == rhs.isSelected &&
-            lhs.isHovered == rhs.isHovered
+            lhs.isHovered == rhs.isHovered &&
+            lhs.thumbnailState == rhs.thumbnailState
     }
 
     var body: some View {
@@ -665,10 +694,19 @@ struct ClipCard: View, Equatable {
 
     @ViewBuilder
     private var preview: some View {
-        if let thumbnail = thumbnailProvider(item) {
+        if case let .loaded(thumbnail) = thumbnailState {
             ThumbnailPreview(thumbnail: thumbnail, style: typeStyle, typeLabel: typeLabel)
         } else {
             switch ClipboardTypeFilter(rawValue: item.primaryType) {
+            case .image:
+                VStack(spacing: 8) {
+                    Image(systemName: "photo")
+                        .font(.system(size: 24))
+                    Text(L10n.text(thumbnailState == .loading ? "overlay.imageLoading" : "overlay.imageUnavailable"))
+                        .font(.caption)
+                }
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             case .url:
                 LinkCardPreview(text: item.previewText, style: typeStyle)
             case .file:

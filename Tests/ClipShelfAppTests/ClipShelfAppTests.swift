@@ -2,6 +2,7 @@ import AppKit
 import ClipShelfCore
 import CryptoKit
 import XCTest
+import SwiftUI
 @testable import ClipShelfApp
 
 @MainActor
@@ -177,8 +178,8 @@ final class ClipShelfAppTests: XCTestCase {
         XCTAssertEqual(controller.selectedIndex, 0)
 
         let item = controller.items[0]
-        let plainCard = ClipCard(index: 0, item: item, isSelected: true, isHovered: false, thumbnailProvider: { _ in nil })
-        let hoveredCard = ClipCard(index: 0, item: item, isSelected: true, isHovered: true, thumbnailProvider: { _ in nil })
+        let plainCard = ClipCard(index: 0, item: item, isSelected: true, isHovered: false, thumbnailState: .unavailable)
+        let hoveredCard = ClipCard(index: 0, item: item, isSelected: true, isHovered: true, thumbnailState: .unavailable)
         XCTAssertNotEqual(plainCard, hoveredCard)
     }
 
@@ -225,6 +226,121 @@ final class ClipShelfAppTests: XCTestCase {
         )
         view.revealSelectionForTesting(backwardRequest, in: scrollView)
         XCTAssertEqual(scrollView.contentView.bounds.origin.x, 0, accuracy: 0.5)
+    }
+
+    func testThumbnailCompletionRefreshesRenderedCardDuringHover() throws {
+        let controller = try makeController(items: [])
+        let item = imageItem()
+        var completions: [(NSImage?) -> Void] = []
+        let cache = OverlayThumbnailCache { _, _, completion in completions.append(completion) }
+        let host = NSHostingView(rootView: ThumbnailTestView(cache: cache, item: item))
+        host.frame = NSRect(x: 0, y: 0, width: 240, height: 220)
+        let window = NSWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+        window.contentView = host
+        window.orderFrontRegardless()
+        defer { window.orderOut(nil) }
+        cache.load(item: item, store: controller.store, presentation: 1)
+        cache.load(item: item, store: controller.store, presentation: 1)
+        XCTAssertEqual(completions.count, 1)
+        pumpUI()
+        let before = try renderedPixels(host)
+        for hovering in [false, true, false, true] {
+            host.rootView = ThumbnailTestView(cache: cache, item: item, hovering: hovering)
+            pumpUI()
+            XCTAssertEqual(cache.state(for: item), .loading)
+        }
+        let image = NSImage(size: NSSize(width: 100, height: 80), flipped: false) { rect in
+            NSColor.systemRed.setFill()
+            rect.fill()
+            return true
+        }
+        completions[0](image)
+        pumpUI()
+        let after = try renderedPixels(host)
+        XCTAssertNotEqual(before, after, "Published completion must update an equatable card without another input event")
+        XCTAssertEqual(cache.state(for: item), .loaded(image))
+        for hovering in [false, true, false] {
+            host.rootView = ThumbnailTestView(cache: cache, item: item, hovering: hovering)
+            pumpUI()
+            XCTAssertEqual(cache.state(for: item), .loaded(image))
+            XCTAssertGreaterThan(try redPixelCount(host), 1000, "Hover must retain the rendered image")
+        }
+        cache.load(item: item, store: controller.store, presentation: 2)
+        XCTAssertEqual(completions.count, 1, "Reopening must retain successful thumbnails")
+        let a = ClipCard(index: 0, item: item, isSelected: false, isHovered: true, thumbnailState: .loading)
+        let b = ClipCard(index: 0, item: item, isSelected: false, isHovered: true, thumbnailState: .loaded(image))
+        XCTAssertNotEqual(a, b)
+    }
+
+    func testThumbnailFailureRetriesOnReopenAndRejectsStaleResults() throws {
+        let controller = try makeController(items: [])
+        let item = imageItem()
+        var completions: [(NSImage?) -> Void] = []
+        let cache = OverlayThumbnailCache { _, _, completion in completions.append(completion) }
+        cache.load(item: item, store: controller.store, presentation: 1)
+        completions[0](nil)
+        pumpUI()
+        XCTAssertEqual(cache.state(for: item), .unavailable)
+        cache.load(item: item, store: controller.store, presentation: 1)
+        XCTAssertEqual(completions.count, 1)
+        cache.load(item: item, store: controller.store, presentation: 2)
+        XCTAssertEqual(completions.count, 2)
+        cache.retain(items: [])
+        cache.load(item: item, store: controller.store, presentation: 2)
+        completions[1](NSImage(size: NSSize(width: 10, height: 10)))
+        pumpUI()
+        XCTAssertEqual(cache.state(for: item), .loading, "Old filtered-out request must not overwrite the new request")
+        let image = NSImage(size: NSSize(width: 20, height: 20))
+        completions[2](image)
+        pumpUI()
+        XCTAssertEqual(cache.state(for: item), .loaded(image))
+    }
+
+    func testTwentyThumbnailsRemainLoadedAcrossRepeatedAppearances() throws {
+        let controller = try makeController(items: [])
+        let items = (0..<22).map { _ in imageItem() }
+        var completions: [(NSImage?) -> Void] = []
+        let cache = OverlayThumbnailCache { _, _, completion in completions.append(completion) }
+        for item in items { cache.load(item: item, store: controller.store, presentation: 1) }
+        let image = NSImage(size: NSSize(width: 20, height: 20))
+        for complete in completions.reversed() { complete(image) }
+        pumpUI()
+        cache.retain(items: items)
+        for item in items.reversed() {
+            cache.load(item: item, store: controller.store, presentation: 1)
+            XCTAssertEqual(cache.state(for: item), .loaded(image))
+        }
+        XCTAssertEqual(completions.count, 22)
+    }
+
+    private func redPixelCount(_ view: NSView) throws -> Int {
+        let bitmap = try XCTUnwrap(NSBitmapImageRep(data: renderedPixels(view)))
+        var count = 0
+        for y in 0..<bitmap.pixelsHigh {
+            for x in 0..<bitmap.pixelsWide {
+                guard let color = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB) else { continue }
+                if color.redComponent > 0.7 && color.greenComponent < 0.5 && color.blueComponent < 0.5 { count += 1 }
+            }
+        }
+        return count
+    }
+
+    private func imageItem() -> ClipboardItem {
+        var item = ClipboardItem(sourceBundleId: "test", sourceName: "Fixture", primaryType: "image", previewText: "Image", contentHash: UUID().uuidString)
+        item.blobRefs = [ClipboardBlob(itemId: item.id, uti: "public.png", size: 1,
+                                      sha256: "fixture", encryptedPath: "fixture", thumbnailPath: "fixture.png")]
+        return item
+    }
+
+    private func pumpUI() {
+        RunLoop.main.run(until: Date().addingTimeInterval(0.15))
+    }
+
+    private func renderedPixels(_ view: NSView) throws -> Data {
+        view.layoutSubtreeIfNeeded()
+        let bitmap = try XCTUnwrap(view.bitmapImageRepForCachingDisplay(in: view.bounds))
+        view.cacheDisplay(in: view.bounds, to: bitmap)
+        return try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
     }
 
     private func makeController(items previews: [String]) throws -> ClipShelfController {
@@ -300,5 +416,18 @@ private final class RecordingOverlayPresenter: OverlayPresenting {
 
     func hideForPaste(completion: @escaping () -> Void) {
         completion()
+    }
+}
+
+@MainActor
+private struct ThumbnailTestView: View {
+    @ObservedObject var cache: OverlayThumbnailCache
+    let item: ClipboardItem
+    var hovering = true
+    var body: some View {
+        ClipCard(index: 0, item: item, isSelected: false, isHovered: hovering,
+                 thumbnailState: cache.state(for: item))
+            .equatable()
+            .transaction { $0.animation = nil }
     }
 }

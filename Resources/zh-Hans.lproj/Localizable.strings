@@ -56,7 +56,7 @@
 "settings.paste" = "粘贴";
 "settings.mode" = "模式";
 "settings.modeHelp" = "直接粘贴需要 macOS 辅助功能权限。";
-"settings.directPaste" = "允许辅助功能时直接粘贴";
+"settings.directPaste" = "直接粘贴";
 "settings.copyOnly" = "只复制";
 "settings.retention" = "保留时间";
 "settings.largeLimit" = "大文件上限：%d MB";
@@ -137,3 +137,6 @@
 "retention.days30" = "30 天";
 "retention.days90" = "90 天";
 "retention.days365" = "365 天";
+
+"overlay.imageLoading" = "正在加载预览…";
+"overlay.imageUnavailable" = "预览不可用";

@@ -239,21 +239,30 @@ private struct SettingsRow<Content: View>: View {
     @ViewBuilder var trailing: Content
 
     var body: some View {
-        HStack(alignment: .center, spacing: 14) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text(title)
-                    .font(.system(size: 13, weight: .medium))
-                if let detail {
-                    Text(detail)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .center, spacing: 14) {
+                label.fixedSize(horizontal: true, vertical: false)
+                Spacer(minLength: 18)
+                trailing
             }
-            Spacer(minLength: 18)
-            trailing
+            VStack(alignment: .leading, spacing: 8) {
+                label
+                trailing
+            }
         }
         .frame(minHeight: 34)
     }
+
+    private var label: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title).font(.system(size: 13, weight: .medium))
+            if let detail {
+                Text(detail).font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
 }
 
 private struct GeneralSettingsView: View {
@@ -276,14 +285,18 @@ private struct GeneralSettingsView: View {
             }
 
             SettingsCard(title: L10n.text("settings.paste")) {
-                SettingsRow(title: L10n.text("settings.mode"), detail: L10n.text("settings.modeHelp")) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(L10n.text("settings.mode")).font(.system(size: 13, weight: .medium))
+                    Text(L10n.text("settings.modeHelp"))
+                        .font(.caption).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                     Picker("", selection: $settings.pasteMode) {
                         Text(L10n.text("settings.directPaste")).tag(PasteMode.direct)
                         Text(L10n.text("settings.copyOnly")).tag(PasteMode.copyOnly)
                     }
                     .labelsHidden()
                     .pickerStyle(.segmented)
-                    .frame(width: 260)
+                    .frame(maxWidth: .infinity)
                 }
             }
 

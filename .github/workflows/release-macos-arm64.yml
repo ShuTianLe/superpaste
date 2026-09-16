@@ -6,11 +6,11 @@ on:
       version:
         description: Version without leading v
         required: true
-        default: 1.0.10
+        default: 1.0.11
       build:
         description: CFBundleVersion
         required: true
-        default: "11"
+        default: "12"
       publish_release:
         description: Create GitHub Release
         required: true
@@ -80,6 +80,8 @@ jobs:
       - name: Build and test
         run: |
           set -euo pipefail
+          test "$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' Resources/Info.plist)" = "${{ inputs.version }}"
+          test "$(/usr/libexec/PlistBuddy -c 'Print CFBundleVersion' Resources/Info.plist)" = "${{ inputs.build }}"
           swift build
           swift test
           swift build -c release --arch arm64
@@ -122,18 +124,18 @@ jobs:
           macOS 14+，Apple Silicon / arm64。
 
           更新内容：
-          - 修复键盘快捷键唤起后面板因焦点竞态瞬间消失的问题。
-          - 恢复鼠标悬停反馈，并保持悬停不改变正式选择。
-          - 移除卡片类型标题下方的英文副标题，界面信息更清晰。
-          - 优化连续浏览时的选中反馈、滚动动画和数据刷新性能。
+          - 修复首次打开或悬停时，已加载的图片预览仍停留在占位状态的问题。
+          - 图片异步加载完成后自动刷新，失败的预览可在重新打开面板后重试。
+          - 修复设置页粘贴模式控件越界，并改善中英文长文本布局。
+          - 保持悬停反馈与正式选择独立，图片加载不影响键盘浏览。
 
           macOS 14+, Apple Silicon / arm64.
 
           Changes:
-          - Fixed the focus race that could make the panel disappear immediately after a keyboard shortcut.
-          - Restored mouse hover feedback while keeping hover separate from the committed selection.
-          - Removed English subtitles below card type labels for a clearer interface.
-          - Improved selection feedback, scrolling, and refresh performance during rapid browsing.
+          - Fixed image previews getting stuck on placeholders on first open or hover.
+          - Refresh previews automatically after loading and retry failed previews when reopening the panel.
+          - Fixed overflowing paste-mode controls and improved Chinese and English settings layouts.
+          - Kept hover feedback independent of selection and image loading independent of keyboard navigation.
 
           SHA-256:
 
@@ -167,6 +169,10 @@ jobs:
               --repo "${{ github.repository }}" \
               --target "${{ github.sha }}"
           else
+            if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
+              echo "Tag $TAG already exists; ordinary releases cannot replace it." >&2
+              exit 1
+            fi
             gh release create "$TAG" \
               "dist/${ASSET}" "dist/${ASSET}.sha256" \
               --repo "${{ github.repository }}" \
